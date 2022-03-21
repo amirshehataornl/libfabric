@@ -463,6 +463,7 @@ include prov/shm/Makefile.include
 include prov/tcp/Makefile.include
 include prov/net/Makefile.include
 include prov/rstream/Makefile.include
+include prov/linkx/Makefile.include
 include prov/hook/Makefile.include
 include prov/hook/perf/Makefile.include
 include prov/hook/trace/Makefile.include
