@@ -865,6 +865,7 @@ void fi_ini(void)
 	ofi_register_provider(TCP_INIT, NULL);
 	ofi_register_provider(XNET_INIT, NULL);
 
+	ofi_register_provider(LNX_INIT, NULL);
 	ofi_register_provider(HOOK_PERF_INIT, NULL);
 	ofi_register_provider(HOOK_TRACE_INIT, NULL);
 	ofi_register_provider(HOOK_DEBUG_INIT, NULL);
