@@ -137,7 +137,7 @@ struct smr_tx_entry {
 	int			fd;
 };
 
-struct smr_sar_entry {
+struct smr_pend_entry {
 	struct dlist_entry	entry;
 	struct smr_cmd		cmd;
 	struct fi_peer_rx_entry	*rx_entry;
@@ -148,6 +148,7 @@ struct smr_sar_entry {
 	enum fi_hmem_iface	iface;
 	uint64_t		device;
 	bool			in_use;
+	void			*stream;
 };
 
 struct smr_cq {
@@ -203,7 +204,8 @@ struct smr_cmd_ctx {
 OFI_DECLARE_FREESTACK(struct smr_rx_entry, smr_recv_fs);
 OFI_DECLARE_FREESTACK(struct smr_cmd_ctx, smr_cmd_ctx_fs);
 OFI_DECLARE_FREESTACK(struct smr_tx_entry, smr_pend_fs);
-OFI_DECLARE_FREESTACK(struct smr_sar_entry, smr_sar_fs);
+OFI_DECLARE_FREESTACK(struct smr_pend_entry, smr_sar_fs);
+OFI_DECLARE_FREESTACK(struct smr_pend_entry, smr_ipc_fs);
 
 struct smr_queue {
 	struct dlist_entry list;
@@ -304,8 +306,9 @@ struct smr_ep {
 	struct smr_cmd_ctx_fs	*cmd_ctx_fs;
 	struct smr_pend_fs	*pend_fs;
 	struct smr_sar_fs	*sar_fs;
-
+	struct smr_ipc_fs	*ipc_pend_fs;
 	struct dlist_entry	sar_list;
+	struct dlist_entry	ipc_cpy_pend_list[HMEM_NUM_STREAMS];
 
 	int			ep_idx;
 	struct smr_sock_info	*sock_info;

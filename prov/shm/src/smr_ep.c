@@ -931,6 +931,8 @@ static int smr_ep_close(struct fid *fid)
 	smr_sar_fs_free(ep->sar_fs);
 	ofi_spin_destroy(&ep->tx_lock);
 
+	smr_ipc_fs_free(ep->ipc_pend_fs);
+
 	free((void *)ep->name);
 	free(ep);
 	return 0;
@@ -1747,7 +1749,7 @@ int smr_endpoint(struct fid_domain *domain, struct fi_info *info,
 		  struct fid_ep **ep_fid, void *context)
 {
 	struct smr_ep *ep;
-	int ret;
+	int ret, i;
 	char name[SMR_NAME_MAX];
 
 	smr_init_sig_handlers();
@@ -1780,6 +1782,9 @@ int smr_endpoint(struct fid_domain *domain, struct fi_info *info,
 	ep->cmd_ctx_fs = smr_cmd_ctx_fs_create(info->rx_attr->size, NULL, NULL);
 	ep->pend_fs = smr_pend_fs_create(info->tx_attr->size, NULL, NULL);
 	ep->sar_fs = smr_sar_fs_create(info->rx_attr->size, NULL, NULL);
+	ep->ipc_pend_fs = smr_ipc_fs_create(info->rx_attr->size, NULL, NULL);
+	for (i = 0; i < HMEM_NUM_STREAMS; i++)
+		dlist_init(&ep->ipc_cpy_pend_list[i]);
 
 	dlist_init(&ep->sar_list);
 
