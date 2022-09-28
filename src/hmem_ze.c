@@ -406,7 +406,7 @@ int ze_hmem_get_shared_handle(int dev_fd, void *dev_buf, int *ze_fd,
 	int ret;
 
 	assert(dev_fd != -1);
-	ret = ze_hmem_get_handle(dev_buf, (void **) &ze_handle);
+	ret = ze_hmem_get_handle(dev_buf, 0, (void **) &ze_handle);
 	if (ret)
 		return ret;
 
@@ -982,7 +982,7 @@ bool ze_hmem_is_addr_valid(const void *addr, uint64_t *device, uint64_t *flags)
 	return true;
 }
 
-int ze_hmem_get_handle(void *dev_buf, void **handle)
+int ze_hmem_get_handle(void *dev_buf, size_t size, void **handle)
 {
 	ze_result_t ze_ret;
 
@@ -996,7 +996,7 @@ int ze_hmem_get_handle(void *dev_buf, void **handle)
 	return FI_SUCCESS;
 }
 
-int ze_hmem_open_handle(void **handle, uint64_t device, void **ipc_ptr)
+int ze_hmem_open_handle(void **handle, size_t size, uint64_t device, void **ipc_ptr)
 {
 	ze_result_t ze_ret;
 	int dev_id = (int) device;
@@ -1125,12 +1125,12 @@ bool ze_hmem_is_addr_valid(const void *addr, uint64_t *device, uint64_t *flags)
 	return false;
 }
 
-int ze_hmem_get_handle(void *dev_buf, void **handle)
+int ze_hmem_get_handle(void *dev_buf, size_t size, void **handle)
 {
 	return -FI_ENOSYS;
 }
 
-int ze_hmem_open_handle(void **handle, uint64_t device, void **ipc_ptr)
+int ze_hmem_open_handle(void **handle, size_t size, uint64_t device, void **ipc_ptr)
 {
 	return -FI_ENOSYS;
 }
