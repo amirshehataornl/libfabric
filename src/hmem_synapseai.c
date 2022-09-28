@@ -105,12 +105,13 @@ bool synapseai_is_addr_valid(const void *addr, uint64_t *device,
 	return false;
 }
 
-int synapseai_get_handle(void *dev_buf, void **handle)
+int synapseai_get_handle(void *dev_buf, size_t size, void **handle)
 {
 	return -FI_ENOSYS;
 }
 
-int synapseai_open_handle(void **handle, uint64_t device, void **ipc_ptr)
+int synapseai_open_handle(void **handle, size_t size, uint64_t device,
+			  void **ipc_ptr)
 {
 	return -FI_ENOSYS;
 }
@@ -189,12 +190,13 @@ bool synapseai_is_addr_valid(const void *addr, uint64_t *device,
 	return false;
 }
 
-int synapseai_get_handle(void *dev_buf, void **handle)
+int synapseai_get_handle(void *dev_buf, size_t size, void **handle)
 {
 	return -FI_ENOSYS;
 }
 
-int synapseai_open_handle(void **handle, uint64_t device, void **ipc_ptr)
+int synapseai_open_handle(void **handle, size_t size, uint64_t device,
+			  void **ipc_ptr)
 {
 	return -FI_ENOSYS;
 }
