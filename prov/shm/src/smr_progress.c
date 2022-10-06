@@ -315,7 +315,8 @@ static int smr_progress_inject(struct smr_cmd *cmd, enum fi_hmem_iface iface,
 	return FI_SUCCESS;
 }
 
-static int smr_progress_iov(struct smr_cmd *cmd, struct iovec *iov,
+static int smr_progress_iov(struct smr_cmd *cmd,
+				enum fi_hmem_iface iface, struct iovec *iov,
 			    size_t iov_count, size_t *total_len,
 			    struct smr_ep *ep, int err)
 {
@@ -331,6 +332,12 @@ static int smr_progress_iov(struct smr_cmd *cmd, struct iovec *iov,
 		goto out;
 	}
 
+	/* if the local iface is not FI_HMEM_SYSTEM, that means we're getting
+	 * here because the peer's buffer is host but ours is device. This can
+	 * be handled if we have XPMEM enabled, otherwise, we'll fail the
+	 * operation.
+	 */
+
 #if HAVE_XPMEM
 	struct xpmem_client *xpmem = &smr_peer_data(ep->region)[cmd->msg.hdr.id].xpmem;
 
@@ -339,15 +346,20 @@ static int smr_progress_iov(struct smr_cmd *cmd, struct iovec *iov,
 		ret = smr_xpmem_loop(ep, xpmem, cmd->msg.hdr.id, iov, iov_count, cmd->msg.data.iov,
 				cmd->msg.data.iov_count, 0, cmd->msg.hdr.size,
 				cmd->msg.hdr.op == ofi_op_read_req);
-	} else {
+	} else if (iface == FI_HMEM_SYSTEM) {
 		ret = smr_cma_loop(peer_smr->pid, iov, iov_count, cmd->msg.data.iov,
 				cmd->msg.data.iov_count, 0, cmd->msg.hdr.size,
 				cmd->msg.hdr.op == ofi_op_read_req);
+	} else {
+		ret = -FI_ENOSYS;
 	}
 #else
+	if (iface == FI_HMEM_SYSTEM)
 		ret = smr_cma_loop(peer_smr->pid, iov, iov_count, cmd->msg.data.iov,
 				cmd->msg.data.iov_count, 0, cmd->msg.hdr.size,
 				cmd->msg.hdr.op == ofi_op_read_req);
+	else
+		ret = -FI_ENOSYS;
 #endif /* HAVE_XPMEM */
 
 	if (!ret)
@@ -783,7 +795,7 @@ static int smr_start_common(struct smr_ep *ep, struct smr_cmd *cmd,
 		ofi_atomic_inc64(&ep->region->cmd_cnt);
 		break;
 	case smr_src_iov:
-		err = smr_progress_iov(cmd, rx_entry->iov, rx_entry->count,
+		err = smr_progress_iov(cmd, iface, rx_entry->iov, rx_entry->count,
 				       &total_len, ep, 0);
 		break;
 	case smr_src_mmap:
@@ -995,7 +1007,7 @@ static int smr_progress_cmd_rma(struct smr_ep *ep, struct smr_cmd *cmd,
 		}
 		break;
 	case smr_src_iov:
-		err = smr_progress_iov(cmd, iov, iov_count, &total_len, ep, ret);
+		err = smr_progress_iov(cmd, iface, iov, iov_count, &total_len, ep, ret);
 		break;
 	case smr_src_mmap:
 		err = smr_progress_mmap(cmd, iface, device, iov,

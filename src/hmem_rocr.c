@@ -372,6 +372,16 @@ int rocr_copy_to_dev(uint64_t device, void *dest, const void *src,
 {
 	int ret;
 	void *src_memcpy_ptr;
+	size_t h2d_thresh;
+
+	if (fi_param_get_size_t(&core_prov, "rocr_h2d_threshold",
+						&h2d_thresh) < 0)
+		h2d_thresh = H2D_THRESHOLD;
+
+	if (size <= h2d_thresh) {
+		memcpy(dest, src, size);
+		return FI_SUCCESS;
+	}
 
 	ret = rocr_host_memory_ptr((void *) src, &src_memcpy_ptr, NULL, NULL,
 							   NULL, NULL);
