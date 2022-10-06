@@ -51,6 +51,7 @@ common_srcs =				\
 	src/hmem_neuron.c		\
 	src/hmem_synapseai.c		\
 	src/hmem_ipc_cache.c	        \
+	src/hmem_xpmem.c		\
 	src/common.c			\
 	src/enosys.c			\
 	src/rbtree.c			\
@@ -86,6 +87,7 @@ common_srcs =				\
 	prov/util/src/ze_mem_monitor.c \
 	prov/util/src/cuda_ipc_monitor.c \
 	prov/util/src/rocr_ipc_monitor.c \
+	prov/util/src/xpmem_monitor.c \
 	prov/coll/src/coll_attr.c	\
 	prov/coll/src/coll_av.c		\
 	prov/coll/src/coll_av_set.c	\
@@ -171,6 +173,7 @@ util_fi_pingpong_LDADD = $(linkback)
 nodist_src_libfabric_la_SOURCES =
 src_libfabric_la_SOURCES =			\
 	include/ofi_hmem.h			\
+	include/ofi_xpmem.h			\
 	include/ofi.h				\
 	include/ofi_abi.h			\
 	include/ofi_atom.h			\

@@ -41,6 +41,10 @@
 #include <rdma/fi_domain.h>
 #include <stdbool.h>
 
+#if HAVE_XPMEM
+#include <xpmem.h>
+#endif
+
 extern bool ofi_hmem_disable_p2p;
 
 #define MAX_IPC_HANDLE_SIZE	64
