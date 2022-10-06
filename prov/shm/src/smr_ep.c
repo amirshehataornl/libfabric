@@ -42,6 +42,10 @@
 #include "smr.h"
 #include "smr_dsa.h"
 
+#if HAVE_XPMEM
+#include "ofi_xpmem.h"
+#endif
+
 extern struct fi_ops_msg smr_msg_ops, smr_no_recv_msg_ops, smr_srx_msg_ops;
 extern struct fi_ops_tagged smr_tag_ops, smr_no_recv_tag_ops, smr_srx_tag_ops;
 extern struct fi_ops_rma smr_rma_ops;
@@ -1659,13 +1663,22 @@ static int smr_ep_ctrl(struct fid *fid, int command, void *arg)
 			return ret;
 
 		if (ep->util_ep.caps & FI_HMEM || smr_env.disable_cma) {
-			ep->region->cma_cap_peer = SMR_CMA_CAP_OFF;
-			ep->region->cma_cap_self = SMR_CMA_CAP_OFF;
+			ep->region->cma_cap_peer = SMR_VMA_CAP_OFF;
+			ep->region->cma_cap_self = SMR_VMA_CAP_OFF;
 			if (ep->util_ep.caps & FI_HMEM) {
 				if (ze_hmem_p2p_enabled())
 					smr_init_ipc_socket(ep);
 			}
 		}
+
+#if HAVE_XPMEM
+		if (smr_env.use_xpmem && xpmem)
+			ep->region->xpmem_cap_self = SMR_VMA_CAP_ON;
+		else
+			ep->region->xpmem_cap_self = SMR_VMA_CAP_OFF;
+#else
+		ep->region->xpmem_cap_self = SMR_VMA_CAP_OFF;
+#endif
 
 		if (!ep->srx) {
 			domain = container_of(ep->util_ep.domain,
@@ -1684,6 +1697,7 @@ static int smr_ep_ctrl(struct fid *fid, int command, void *arg)
 			ep->util_ep.ep_fid.msg = &smr_no_recv_msg_ops;
 			ep->util_ep.ep_fid.tagged = &smr_no_recv_tag_ops;
 		}
+
 		smr_exchange_all_peers(ep->region);
 
 		if (smr_env.use_dsa_sar)

@@ -230,6 +230,7 @@ extern struct ofi_mem_monitor *cuda_monitor;
 extern struct ofi_mem_monitor *cuda_ipc_monitor;
 extern struct ofi_mem_monitor *rocr_monitor;
 extern struct ofi_mem_monitor *rocr_ipc_monitor;
+extern struct ofi_mem_monitor *xpmem_monitor;
 extern struct ofi_mem_monitor *ze_monitor;
 extern struct ofi_mem_monitor *import_monitor;
 
@@ -308,7 +309,7 @@ struct ofi_mr_cache_params {
 
 extern struct ofi_mr_cache_params	cache_params;
 
-#define OFI_HMEM_MAX 6
+#define OFI_HMEM_MAX FI_HMEM_MAX
 
 struct ofi_mr_cache {
 	struct util_domain		*domain;

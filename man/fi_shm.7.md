@@ -168,6 +168,11 @@ The *shm* provider checks for the following environment variables:
   page fault is reported, so that there is valid address translation for the
   remaining addresses in the command. This minimizes DSA page faults. Default
   false
+
+*FI_SHM_USE_XPMEM*
+ : SHM requires the use of either CMA or XPMEM. If FI_SHM_USE_XPMEM is set to 1,
+   the provider will select XPMEM over CMA if XPMEM is availble.
+
 # SEE ALSO
 
 [`fabric`(7)](fabric.7.html),
