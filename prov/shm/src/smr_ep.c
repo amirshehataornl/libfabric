@@ -42,6 +42,7 @@
 #include "smr_signal.h"
 #include "smr.h"
 #include "smr_dsa.h"
+#include "ofi_xpmem.h"
 
 extern struct fi_ops_msg smr_msg_ops, smr_no_recv_msg_ops;
 extern struct fi_ops_tagged smr_tag_ops, smr_no_recv_tag_ops;
@@ -1354,6 +1355,11 @@ static int smr_ep_ctrl(struct fid *fid, int command, void *arg)
 		else
 			ep->smr_progress_ipc_list = smr_progress_ipc_list_noop;
 
+		if (smr_env.use_xpmem)
+			ep->region->xpmem_cap_self = SMR_VMA_CAP_ON;
+		else
+			ep->region->xpmem_cap_self = SMR_VMA_CAP_OFF;
+
 		if (!ep->srx) {
 			domain = container_of(ep->util_ep.domain,
 					      struct smr_domain,
@@ -1386,6 +1392,13 @@ static int smr_ep_ctrl(struct fid *fid, int command, void *arg)
 
 		if (smr_env.use_dsa_sar)
 			smr_dsa_context_init(ep);
+
+		/* if XPMEM is on after exchanging peer info, then set the
+		 * endpoint p2p to XPMEM so it can be used on the fast
+		 * path
+		 */
+		if (ep->region->xpmem_cap_self == SMR_VMA_CAP_ON)
+			ep->p2p_type = FI_SHM_P2P_XPMEM;
 
 		break;
 	default:
@@ -1506,6 +1519,9 @@ int smr_endpoint(struct fid_domain *domain, struct fi_info *info,
 	ep->util_ep.ep_fid.atomic = &smr_atomic_ops;
 
 	*ep_fid = &ep->util_ep.ep_fid;
+
+	/* default to CMA for p2p */
+	ep->p2p_type = FI_SHM_P2P_CMA;
 	return 0;
 ep:
 	ofi_endpoint_close(&ep->util_ep);
