@@ -64,6 +64,13 @@ extern "C" {
 
 #define SMR_CMD_SIZE		256	/* align with 64-byte cache line */
 
+int xpmem_init(void);
+int xpmem_cleanup(void);
+int xpmem_copy(struct ofi_mr_cache *cache, struct iovec *local,
+	       unsigned long local_cnt, struct iovec *remote,
+	       unsigned long remote_cnt, size_t total, uint64_t id,
+	       bool write);
+
 enum ofi_shm_p2p_type {
 	FI_SHM_P2P_XPMEM,
 	FI_SHM_P2P_CMA,

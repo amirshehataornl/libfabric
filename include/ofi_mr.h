@@ -56,10 +56,9 @@ struct ofi_mr_info {
 	struct iovec iov;
 	enum fi_hmem_iface iface;
 	uint64_t device;
-
 	uint64_t peer_id;
-	void     *ipc_mapped_addr;
-	uint8_t  ipc_handle[MAX_IPC_HANDLE_SIZE];
+	void     *mapped_addr;
+	uint8_t  handle[MAX_MR_HANDLE_SIZE];
 };
 
 
@@ -232,6 +231,7 @@ extern struct ofi_mem_monitor *rocr_monitor;
 extern struct ofi_mem_monitor *rocr_ipc_monitor;
 extern struct ofi_mem_monitor *ze_monitor;
 extern struct ofi_mem_monitor *import_monitor;
+extern struct ofi_mem_monitor *xpmem_monitor;
 
 /*
  * Used to store registered memory regions into a lookup map.  This
@@ -356,6 +356,15 @@ void ofi_ipc_cache_destroy(struct ofi_mr_cache *cache);
 int  ofi_ipc_cache_search(struct ofi_mr_cache *cache, uint64_t peer_id,
 			  struct ipc_info *ipc_info,
 			  struct ofi_mr_entry **mr_entry);
+
+#if HAVE_XPMEM
+int ofi_xpmem_cache_open(struct ofi_mr_cache **cache,
+			 struct util_domain *domain);
+void ofi_xpmem_cache_destroy(struct ofi_mr_cache *cache);
+int ofi_xpmem_cache_search(struct ofi_mr_cache *cache,
+			   struct iovec *iov, int64_t peer_id,
+			   struct ofi_mr_entry **mr_entry);
+#endif /* HAVE_XPMEM */
 
 static inline bool ofi_mr_cache_full(struct ofi_mr_cache *cache)
 {

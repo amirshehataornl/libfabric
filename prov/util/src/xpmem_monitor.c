@@ -1,7 +1,5 @@
 /*
- * (C) Copyright 2020 Hewlett Packard Enterprise Development LP
- * (C) Copyright 2020-2021 Intel Corporation. All rights reserved.
- * (C) Copyright 2021 Amazon.com, Inc. or its affiliates.
+ * (C) Copyright (c) 2022 UT-Battelle, LLC. All rights reserved.
  *
  * This software is available to you under a choice of one of two
  * licenses.  You may choose to be licensed under the terms of the GNU
@@ -32,48 +30,37 @@
  * SOFTWARE.
  */
 
-#if HAVE_CONFIG_H
-#include <config.h>
-#endif
+#include "ofi_mr.h"
 
-#include "ofi_shm.h"
-#include "ofi.h"
-#include "ofi_iov.h"
+#if HAVE_XPMEM
 
-struct ofi_shm_p2p_ops p2p_ops[] = {
-	[FI_SHM_P2P_XPMEM] = {
-		.init = xpmem_init,
-		.cleanup = xpmem_cleanup,
-		.copy = xpmem_copy,
-	},
-	[FI_SHM_P2P_CMA] = {
-		.init = ofi_shm_p2p_init_noop,
-		.cleanup = ofi_shm_p2p_cleanup_noop,
-		.copy = ofi_shm_p2p_copy_noop,
-	},
-	[FI_SHM_P2P_DSA] = {
-		.init = ofi_shm_p2p_init_noop,
-		.cleanup = ofi_shm_p2p_cleanup_noop,
-		.copy = ofi_shm_p2p_copy_noop,
-	},
+#include "ofi_hmem.h"
+
+static bool xpmem_monitor_valid(struct ofi_mem_monitor *monitor,
+			const struct ofi_mr_info *info,
+			struct ofi_mr_entry *entry)
+{
+	return true;
+}
+
+#else
+
+static bool xpmem_monitor_valid(struct ofi_mem_monitor *monitor,
+			const struct ofi_mr_info *info,
+			struct ofi_mr_entry *entry)
+{
+	return false;
+}
+
+#endif /* HAVE_XPMEM */
+static struct ofi_mem_monitor xpmem_monitor_ = {
+	.init = ofi_monitor_init,
+	.cleanup = ofi_monitor_cleanup,
+	.start = ofi_monitor_start_no_op,
+	.stop = ofi_monitor_stop_no_op,
+	.subscribe = ofi_monitor_subscribe_no_op,
+	.unsubscribe = ofi_monitor_unsubscribe_no_op,
+	.valid = xpmem_monitor_valid,
 };
 
-int ofi_shm_p2p_init(enum ofi_shm_p2p_type p2p_type)
-{
-	return p2p_ops[p2p_type].init();
-}
-
-int ofi_shm_p2p_cleanup(enum ofi_shm_p2p_type p2p_type)
-{
-	return p2p_ops[p2p_type].cleanup();
-}
-
-int
-ofi_shm_p2p_copy(enum ofi_shm_p2p_type p2p_type, struct ofi_mr_cache *cache,
-		 struct iovec *local, unsigned long local_cnt,
-		 struct iovec *remote, unsigned long remote_cnt, size_t total,
-		 uint64_t id, bool write)
-{
-	return p2p_ops[p2p_type].copy(cache, local, local_cnt, remote,
-				      remote_cnt, total, id, write);
-}
+struct ofi_mem_monitor *xpmem_monitor = &xpmem_monitor_;
