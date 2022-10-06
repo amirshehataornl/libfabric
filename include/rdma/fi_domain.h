@@ -128,6 +128,8 @@ enum fi_hmem_iface {
 	FI_HMEM_ZE,
 	FI_HMEM_NEURON,
 	FI_HMEM_SYNAPSEAI,
+	FI_HMEM_XPMEM,
+	FI_HMEM_MAX,
 };
 
 struct fi_mr_attr {
