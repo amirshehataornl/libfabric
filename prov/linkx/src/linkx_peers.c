@@ -551,18 +551,33 @@ static struct fi_ops_av lnx_av_ops = {
 	.straddr = lnx_av_straddr,
 };
 
+static void lnx_get_core_av_attr(struct local_prov_ep *ep,
+								 struct fi_av_attr *attr)
+{
+	/* TODO: CXI sets ep_cnt to 128. This will become the initial size of
+	 * the AV table, but it'll be resized by that cnt every time we run out
+	 * of space in it. So I don't suspect there will be a performance
+	 * impact. But keep an eye out.
+	 */
+	memset(attr, 0, sizeof(*attr));
+	attr->count = ep->lpe_fi_info->domain_attr->ep_cnt;
+	attr->type = ep->lpe_fi_info->domain_attr->av_type;
+}
+
 static int lnx_open_avs(struct local_prov *prov, struct fi_av_attr *attr,
 						void *context)
 {
 	int i;
 	int rc = 0;
 	struct local_prov_ep *ep;
+	struct fi_av_attr core_attr;
 
 	for (i = 0; i < LNX_MAX_LOCAL_EPS; i++) {
 		ep = prov->lpv_prov_eps[i];
 		if (!ep)
 			continue;
-		rc = fi_av_open(ep->lpe_domain, attr,
+		lnx_get_core_av_attr(ep, &core_attr);
+		rc = fi_av_open(ep->lpe_domain, &core_attr,
 					    &ep->lpe_av, context);
 		if (rc)
 			return rc;
