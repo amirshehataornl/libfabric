@@ -100,7 +100,7 @@ int lnx_ep_close(struct fid *fid)
 	return rc;
 }
 
-static int lnx_enable_core_eps(void *arg)
+static int lnx_enable_core_eps(struct lnx_ep *lep)
 {
 	int rc, i;
 	struct local_prov *entry;
@@ -112,6 +112,16 @@ static int lnx_enable_core_eps(void *arg)
 			ep = entry->lpv_prov_eps[i];
 			if (!ep)
 				continue;
+
+			/* bind the shared receive context */
+			rc = fi_ep_bind(ep->lpe_ep, &ep->lpe_srx.ep_fid.fid, 0);
+			if (rc) {
+				FI_INFO(&lnx_prov, FI_LOG_CORE,
+						"%s doesn't supported SRX, disabling at the LINKx level",
+						ep->lpe_fabric_name);
+				lep->le_domain->ld_srx_supported = false;
+			}
+
 			rc = fi_enable(ep->lpe_ep);
 			if (rc)
 				return rc;
@@ -135,7 +145,7 @@ static int lnx_ep_control(struct fid *fid, int command, void *arg)
 			return -FI_ENOCQ;
 		if (!ep->le_peer_tbl)
 			return -FI_ENOAV;
-		rc = lnx_enable_core_eps(arg);
+		rc = lnx_enable_core_eps(ep);
 		break;
 	default:
 		return -FI_ENOSYS;
@@ -245,12 +255,10 @@ int lnx_ep_bind(struct fid *fid, struct fid *bfid, uint64_t flags)
 		break;
 
 	case FI_CLASS_STX_CTX:	/* shared TX context */
-		/* TODO */
-		break;
+		return -FI_ENOSYS;
 
 	case FI_CLASS_SRX_CTX:	/* shared RX context */
-		/* TODO */
-		break;
+		return -FI_ENOSYS;
 
 	default:
 		return -FI_EINVAL;
@@ -384,7 +392,7 @@ struct fi_ops_cm lnx_cm_ops = {
 };
 
 static int lnx_open_eps(struct local_prov *prov, void *context,
-						size_t fclass)
+						size_t fclass, struct lnx_ep *lep)
 {
 	int i;
 	int rc = 0;
@@ -394,6 +402,7 @@ static int lnx_open_eps(struct local_prov *prov, void *context,
 		ep = prov->lpv_prov_eps[i];
 		if (!ep)
 			continue;
+
 		if (fclass == FI_CLASS_EP)
 			rc = fi_endpoint(ep->lpe_domain, ep->lpe_fi_info,
 							 &ep->lpe_ep, context);
@@ -402,6 +411,13 @@ static int lnx_open_eps(struct local_prov *prov, void *context,
 								&ep->lpe_ep, context);
 		if (rc)
 			return rc;
+
+		ep->lpe_srx.ep_fid.fid.context = lep;
+		ep->lpe_srx.ep_fid.fid.fclass = FI_CLASS_SRX_CTX;
+		ofi_spin_init(&ep->lpe_fslock);
+		/* create a free stack as large as the core endpoint supports */
+		ep->lpe_recv_fs = lnx_recv_fs_create(ep->lpe_fi_info->rx_attr->size,
+									NULL, NULL);
 	}
 
 	return 0;
@@ -411,6 +427,72 @@ static void
 lnx_ep_nosys_progress(struct util_ep *util_ep)
 {
 	assert(0);
+}
+
+static int lnx_match_msg(struct dlist_entry *item, const void *args)
+{
+	/* TODO */
+	return -FI_ENOSYS;
+}
+
+static inline int
+match_tag(uint64_t tag, uint64_t match_tag, uint64_t ignore)
+{
+	return ((tag | ignore) == (match_tag | ignore));
+}
+
+static int lnx_match_tagged(struct dlist_entry *item, const void *args)
+{
+	struct lnx_match_attr *match_attr = (struct lnx_match_attr *) args;
+	struct lnx_rx_entry *entry = (struct lnx_rx_entry *) item;
+
+	/* if a request has no address specified it'll match against any
+	 * rx_entry with a matching tag
+	 *  or
+	 * if an rx_entry has no address specified, it'll match against any
+	 * request with a matching tag
+	 */
+	if (match_attr->lm_id == FI_ADDR_UNSPEC ||
+		entry->rx_entry.addr == FI_ADDR_UNSPEC)
+		return match_tag(entry->rx_entry.tag, match_attr->lm_tag,
+						 match_attr->lm_ignore);
+
+	return (entry->rx_cep == match_attr->lm_cep &&
+			entry->rx_entry.addr == match_attr->lm_id &&
+			match_tag(entry->rx_entry.tag, match_attr->lm_tag,
+					  match_attr->lm_ignore));
+}
+
+static inline int
+lnx_init_qpair(struct lnx_qpair *qpair, dlist_func_t *match_func)
+{
+	int rc;
+
+	rc = ofi_spin_init(&qpair->lqp_qlock);
+	if (rc)
+		return rc;
+
+	dlist_init(&qpair->lqp_recvq);
+	dlist_init(&qpair->lqp_unexq);
+
+	qpair->match_func = match_func;
+
+	return 0;
+}
+
+static inline int
+lnx_init_srq(struct lnx_peer_srq *srq)
+{
+	int rc;
+
+	rc = lnx_init_qpair(&srq->lps_trecv, lnx_match_tagged);
+	if (rc)
+		return rc;
+	rc = lnx_init_qpair(&srq->lps_recv, lnx_match_msg);
+	if (rc)
+		return rc;
+
+	return rc;
 }
 
 static int
@@ -427,17 +509,6 @@ lnx_alloc_endpoint(struct fid_domain *domain, struct fi_info *info,
 
 	ep->le_fclass = fclass;
 
-	/* create all the core provider endpoints */
-	dlist_foreach_container(&local_prov_table, struct local_prov,
-							entry, lpv_entry) {
-		rc = lnx_open_eps(entry, context, fclass);
-		if (rc) {
-			FI_WARN(&lnx_prov, FI_LOG_CORE, "Failed to create ep for %s\n",
-					entry->lpv_prov_name);
-			goto fail;
-		}
-	}
-
 	ep->le_ep.ep_fid.fid.ops = &lnx_ep_fi_ops;
 	ep->le_ep.ep_fid.ops = &lnx_ep_ops;
 	ep->le_ep.ep_fid.cm = &lnx_cm_ops;
@@ -445,7 +516,19 @@ lnx_alloc_endpoint(struct fid_domain *domain, struct fi_info *info,
 	ep->le_ep.ep_fid.tagged = &lnx_tagged_ops;
 	ep->le_ep.ep_fid.rma = &lnx_rma_ops;
 	ep->le_ep.ep_fid.atomic = &lnx_atomic_ops;
-	ep->le_domain = container_of(domain, struct util_domain, domain_fid);
+	ep->le_domain = container_of(domain, struct lnx_domain, ld_domain.domain_fid);
+	lnx_init_srq(&ep->le_srq);
+
+	/* create all the core provider endpoints */
+	dlist_foreach_container(&local_prov_table, struct local_prov,
+							entry, lpv_entry) {
+		rc = lnx_open_eps(entry, context, fclass, ep);
+		if (rc) {
+			FI_WARN(&lnx_prov, FI_LOG_CORE, "Failed to create ep for %s\n",
+					entry->lpv_prov_name);
+			goto fail;
+		}
+	}
 
 	rc = ofi_endpoint_init(domain, &lnx_util_prov, info, &ep->le_ep,
 						   context, lnx_ep_nosys_progress);

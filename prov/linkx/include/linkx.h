@@ -34,6 +34,16 @@
 #define LINKX_H
 
 #define LNX_MAX_LOCAL_EPS 16
+#define LNX_IOV_LIMIT 5
+
+#define lnx_ep_rx_flags(lnx_ep) ((lnx_ep)->le_ep.rx_op_flags)
+
+struct lnx_match_attr {
+	int64_t lm_id;
+	uint64_t lm_tag;
+	uint64_t lm_ignore;
+	struct local_prov_ep *lm_cep;
+};
 
 /*
  * . Each endpoint LINKx manages will have an instance of this structure.
@@ -50,6 +60,18 @@ struct lnx_peer_cq {
 	struct fid_cq *lpc_core_cq;
 };
 
+struct lnx_qpair {
+	struct dlist_entry lqp_recvq;
+	struct dlist_entry lqp_unexq;
+	dlist_func_t *match_func;
+	ofi_spin_t lqp_qlock;
+};
+
+struct lnx_peer_srq {
+	struct lnx_qpair lps_trecv;
+	struct lnx_qpair lps_recv;
+};
+
 struct local_prov_ep {
 	bool lpe_local;
 	char lpe_fabric_name[FI_NAME_MAX];
@@ -59,7 +81,19 @@ struct local_prov_ep {
 	struct fid_av *lpe_av;
 	struct lnx_peer_cq lpe_cq;
 	struct fi_info *lpe_fi_info;
+	struct fid_peer_srx lpe_srx;
+	struct lnx_recv_fs *lpe_recv_fs;
+	ofi_spin_t lpe_fslock;
 };
+
+struct lnx_rx_entry {
+	struct fi_peer_rx_entry rx_entry;
+	struct iovec rx_iov[LNX_IOV_LIMIT];
+	void *rx_desc[LNX_IOV_LIMIT];
+	struct local_prov_ep *rx_cep;
+};
+
+OFI_DECLARE_FREESTACK(struct lnx_rx_entry, lnx_recv_fs);
 
 struct local_prov {
 	struct dlist_entry lpv_entry;
@@ -140,23 +174,28 @@ struct lnx_peer_table {
 	struct util_av lpt_av;
 	int lpt_max_count;
 	int lpt_count;
-	struct util_domain *lpt_domain;
+	struct lnx_domain *lpt_domain;
 	/* an array of peer entries */
 	struct lnx_peer **lpt_entries;
 };
 
 struct lnx_ep {
 	struct util_ep le_ep;
-	struct util_domain *le_domain;
+	struct lnx_domain *le_domain;
 	size_t le_fclass;
 	struct lnx_peer_table *le_peer_tbl;
-	/* TODO - add the shared queues here */
+	struct lnx_peer_srq le_srq;
 };
 
 struct lnx_mem_desc {
 	struct fid_mr *core_mr[LNX_MAX_LOCAL_EPS];
 	struct local_prov_ep *ep[LNX_MAX_LOCAL_EPS];
 	fi_addr_t peer_addr[LNX_MAX_LOCAL_EPS];
+};
+
+struct lnx_domain {
+	struct util_domain ld_domain;
+	bool ld_srx_supported;
 };
 
 extern struct dlist_entry local_prov_table;
@@ -195,6 +234,14 @@ int lnx_scalable_ep(struct fid_domain *domain, struct fi_info *info,
 					struct fid_ep **ep, void *context);
 
 int lnx_cq2ep_bind(struct fid *fid, struct fid *bfid, uint64_t flags);
+
+int lnx_get_msg(struct fid_peer_srx *srx, fi_addr_t addr,
+		size_t size, struct fi_peer_rx_entry **entry);
+int lnx_get_tag(struct fid_peer_srx *srx, fi_addr_t addr,
+		uint64_t tag, struct fi_peer_rx_entry **entry);
+int lnx_queue_msg(struct fi_peer_rx_entry *entry);
+int lnx_queue_tag(struct fi_peer_rx_entry *entry);
+void lnx_free_entry(struct fi_peer_rx_entry *entry);
 
 static inline struct lnx_peer *
 lnx_get_peer(struct lnx_peer **peers, fi_addr_t addr)
@@ -272,8 +319,15 @@ int lnx_select_recv_pathway(struct lnx_peer *lp, struct lnx_mem_desc *desc,
 							const struct iovec *iov, size_t iov_count,
 							void **mem_desc)
 {
-	/* TODO for now keeping two different functions. The receive case will
-	 * need to handle FI_ADDR_UNSPEC
+	/* if the src address is FI_ADDR_UNSPEC, then we'll need to trigger
+	 * all core providers to listen for a receive, since we don't know
+	 * which one will endup getting the message.
+	 *
+	 * For each core provider we're tracking, trigger the recv operation
+	 * on it.
+	 *
+	 * if the src address is specified then we just need to select and
+	 * exact core endpoint to trigger the recv on.
 	 */
 	if (!lp)
 		return -FI_ENOSYS;

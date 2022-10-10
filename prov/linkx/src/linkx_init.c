@@ -53,9 +53,9 @@
 					 FI_TRANSMIT_COMPLETE | \
 					 FI_DELIVERY_COMPLETE)
 #define LNX_PASSTHRU_RX_OP_FLAGS	(0ULL)
-#define LNX_TX_OP_FLAGS		(FI_INJECT | FI_COMPLETION)
+#define LNX_TX_OP_FLAGS		(FI_INJECT_COMPLETE | FI_COMPLETION | \
+							 FI_DELIVERY_COMPLETE | FI_TRANSMIT_COMPLETE)
 #define LNX_RX_OP_FLAGS		(FI_COMPLETION)
-#define LNX_IOV_LIMIT		5
 
 struct local_prov *shm_prov;
 struct util_fabric lnx_fabric_info;
@@ -70,7 +70,7 @@ struct fi_tx_attr lnx_tx_attr = {
 	.inject_size 	= SIZE_MAX,
 	.size 		= SIZE_MAX,
 	.iov_limit 	= LNX_IOV_LIMIT,
-	.rma_iov_limit 	= SIZE_MAX,
+	.rma_iov_limit = LNX_IOV_LIMIT,
 };
 
 struct fi_rx_attr lnx_rx_attr = {
@@ -79,8 +79,8 @@ struct fi_rx_attr lnx_rx_attr = {
 	.msg_order 		= ~0x0ULL,
 	.comp_order 		= ~0x0ULL,
 	.total_buffered_recv 	= SIZE_MAX,
-	.size 			= SIZE_MAX,
-	.iov_limit		= SIZE_MAX,
+	.size 			= 1024,
+	.iov_limit		= LNX_IOV_LIMIT,
 };
 
 struct fi_ep_attr lnx_ep_attr = {
