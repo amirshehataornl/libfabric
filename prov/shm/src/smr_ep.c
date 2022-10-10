@@ -1378,14 +1378,16 @@ bool smr_adjust_multi_recv(struct smr_srx_ctx *srx,
 	return left < srx->min_multi_recv_size;
 }
 
-static int smr_get_msg(struct fid_peer_srx *srx, fi_addr_t addr,
-		       size_t size, struct fi_peer_rx_entry **rx_entry)
+static int smr_get_msg(struct fid_peer_srx *srx, struct fi_peer_match *match_info,
+				struct fi_peer_rx_entry **rx_entry)
 {
 	struct smr_rx_entry *smr_entry;
 	struct smr_srx_ctx *srx_ctx;
 	struct smr_match_attr match_attr;
 	struct dlist_entry *dlist_entry;
 	struct smr_rx_entry *owner_entry;
+	fi_addr_t addr = match_info->addr;
+	size_t size = match_info->size;
 	int ret;
 
 	srx_ctx = srx->ep_fid.fid.context;
@@ -1443,13 +1445,15 @@ out:
 	return ret;
 }
 
-static int smr_get_tag(struct fid_peer_srx *srx, fi_addr_t addr,
-			uint64_t tag, struct fi_peer_rx_entry **rx_entry)
+static int smr_get_tag(struct fid_peer_srx *srx, struct fi_peer_match *match_info,
+					   struct fi_peer_rx_entry **rx_entry)
 {
 	struct smr_rx_entry *smr_entry;
 	struct smr_srx_ctx *srx_ctx;
 	struct smr_match_attr match_attr;
 	struct dlist_entry *dlist_entry;
+	fi_addr_t addr = match_info->addr;
+	uint64_t tag = match_info->tag;
 	int ret;
 
 	srx_ctx = srx->ep_fid.fid.context;

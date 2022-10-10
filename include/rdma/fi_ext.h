@@ -229,6 +229,7 @@ struct fi_peer_rx_entry {
 	fi_addr_t addr;
 	size_t size;
 	uint64_t tag;
+	uint64_t ignore;
 	uint64_t flags;
 	void *context;
 	size_t count;
@@ -238,12 +239,19 @@ struct fi_peer_rx_entry {
 	struct iovec *iov;
 };
 
+struct fi_peer_match {
+	fi_addr_t addr;
+	uint64_t tag;
+	size_t size;
+	void *context;
+};
+
 struct fi_ops_srx_owner {
 	size_t	size;
-	int	(*get_msg)(struct fid_peer_srx *srx, fi_addr_t addr,
-			size_t size, struct fi_peer_rx_entry **entry);
-	int	(*get_tag)(struct fid_peer_srx *srx, fi_addr_t addr,
-			uint64_t tag, struct fi_peer_rx_entry **entry);
+	int	(*get_msg)(struct fid_peer_srx *srx, struct fi_peer_match *match,
+			struct fi_peer_rx_entry **entry);
+	int	(*get_tag)(struct fid_peer_srx *srx, struct fi_peer_match *match,
+			struct fi_peer_rx_entry **entry);
 	int	(*queue_msg)(struct fi_peer_rx_entry *entry);
 	int	(*queue_tag)(struct fi_peer_rx_entry *entry);
 
@@ -256,6 +264,7 @@ struct fi_ops_srx_peer {
 	int	(*start_tag)(struct fi_peer_rx_entry *entry);
 	int	(*discard_msg)(struct fi_peer_rx_entry *entry);
 	int	(*discard_tag)(struct fi_peer_rx_entry *entry);
+	int	(*addr_match)(fi_addr_t addr, struct fi_peer_match *match);
 };
 
 struct fid_peer_srx {

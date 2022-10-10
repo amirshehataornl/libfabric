@@ -52,8 +52,8 @@
 
 #define LNX_MSG_STARTED 1
 
-int lnx_get_msg(struct fid_peer_srx *srx, fi_addr_t addr,
-		size_t size, struct fi_peer_rx_entry **entry)
+int lnx_get_msg(struct fid_peer_srx *srx, struct fi_peer_match *match,
+				struct fi_peer_rx_entry **entry)
 {
 	return -FI_ENOSYS;
 }
@@ -120,14 +120,16 @@ get_rx_entry(struct local_prov_ep *cep, struct iovec *iov, void **desc,
 	return rx_entry;
 }
 
-int lnx_get_tag(struct fid_peer_srx *srx, fi_addr_t addr,
-		uint64_t tag, struct fi_peer_rx_entry **entry)
+int lnx_get_tag(struct fid_peer_srx *srx, struct fi_peer_match *match,
+				struct fi_peer_rx_entry **entry)
 {
 	struct lnx_match_attr match_attr;
 	struct lnx_peer_srq *lnx_srq;
 	struct local_prov_ep *cep;
 	struct lnx_ep *lep;
 	struct lnx_rx_entry *rx_entry;
+	fi_addr_t addr = match->addr;
+	uint64_t tag = match->tag;
 	int rc = 0;
 
 	/* get the endpoint */

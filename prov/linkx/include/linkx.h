@@ -235,10 +235,10 @@ int lnx_scalable_ep(struct fid_domain *domain, struct fi_info *info,
 
 int lnx_cq2ep_bind(struct fid *fid, struct fid *bfid, uint64_t flags);
 
-int lnx_get_msg(struct fid_peer_srx *srx, fi_addr_t addr,
-		size_t size, struct fi_peer_rx_entry **entry);
-int lnx_get_tag(struct fid_peer_srx *srx, fi_addr_t addr,
-		uint64_t tag, struct fi_peer_rx_entry **entry);
+int lnx_get_msg(struct fid_peer_srx *srx, struct fi_peer_match *match,
+				struct fi_peer_rx_entry **entry);
+int lnx_get_tag(struct fid_peer_srx *srx, struct fi_peer_match *match,
+				struct fi_peer_rx_entry **entry);
 int lnx_queue_msg(struct fi_peer_rx_entry *entry);
 int lnx_queue_tag(struct fi_peer_rx_entry *entry);
 void lnx_free_entry(struct fi_peer_rx_entry *entry);
