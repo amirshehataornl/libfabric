@@ -723,5 +723,10 @@ void ofi_link_fini(void)
 
 LNX_INI
 {
+	fi_param_define(&lnx_prov, "srq_support", FI_PARAM_BOOL,
+			"Turns shared receive queue support on and off. By default it is on. "
+			"When SRQ is turned on some Hardware offload capability will not "
+			"work. EX: Hardware Tag matching");
+
 	return &lnx_prov;
 }
