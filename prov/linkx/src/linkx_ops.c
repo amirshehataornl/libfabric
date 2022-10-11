@@ -327,6 +327,8 @@ ssize_t lnx_trecv(struct fid_ep *ep, void *buf, size_t len, void *desc,
 
 	peer_tbl = lep->le_peer_tbl;
 
+	lnx_get_core_desc(desc, &mem_desc);
+
 	/* addr is an index into the peer table.
 	 * This gets us to a peer. Each peer can be reachable on
 	 * multiple endpoints. Each endpoint has its own fi_addr_t which is
@@ -334,7 +336,7 @@ ssize_t lnx_trecv(struct fid_ep *ep, void *buf, size_t len, void *desc,
 	 */
 	lp = lnx_get_peer(peer_tbl->lpt_entries, src_addr);
 
-	rc = lnx_process_tag(lep, &iov, &desc, src_addr, 1, lp, tag, ignore,
+	rc = lnx_process_tag(lep, &iov, &mem_desc, src_addr, 1, lp, tag, ignore,
 						 context, 0);
 	if (rc == -FI_ENOSYS)
 		goto do_recv;
@@ -371,10 +373,11 @@ ssize_t lnx_trecvv(struct fid_ep *ep, const struct iovec *iov, void **desc,
 	lep = container_of(ep, struct lnx_ep, le_ep.ep_fid.fid);
 
 	peer_tbl = lep->le_peer_tbl;
+	lnx_get_core_desc(*desc, &mem_desc);
 
 	lp = lnx_get_peer(peer_tbl->lpt_entries, src_addr);
 
-	rc = lnx_process_tag(lep, (struct iovec *)iov, desc, src_addr, 1, lp, tag, ignore,
+	rc = lnx_process_tag(lep, (struct iovec *)iov, &mem_desc, src_addr, 1, lp, tag, ignore,
 						 context, 0);
 	if (rc == -FI_ENOSYS)
 		goto do_recv;
@@ -411,8 +414,9 @@ ssize_t lnx_trecvmsg(struct fid_ep *ep, const struct fi_msg_tagged *msg,
 	peer_tbl = lep->le_peer_tbl;
 
 	lp = lnx_get_peer(peer_tbl->lpt_entries, msg->addr);
+	lnx_get_core_desc(*msg->desc, &mem_desc);
 
-	rc = lnx_process_tag(lep, (struct iovec *)msg->msg_iov, msg->desc,
+	rc = lnx_process_tag(lep, (struct iovec *)msg->msg_iov, &mem_desc,
 						 msg->addr, msg->iov_count, lp, msg->tag, msg->ignore,
 						 msg->context, flags);
 	if (rc == -FI_ENOSYS)

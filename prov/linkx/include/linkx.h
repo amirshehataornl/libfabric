@@ -365,6 +365,18 @@ lnx_get_peer(struct lnx_peer **peers, fi_addr_t addr)
 }
 
 static inline
+void lnx_get_core_desc(struct lnx_mem_desc *desc, void **mem_desc)
+{
+	if (desc && desc->core_mr[0]) {
+		if (mem_desc)
+			*mem_desc = desc->core_mr[0]->mem_desc;
+		return;
+	}
+
+	*mem_desc = NULL;
+}
+
+static inline
 int lnx_select_send_pathway(struct lnx_peer *lp, struct lnx_mem_desc *desc,
 							struct local_prov_ep **cep, fi_addr_t *addr,
 							const struct iovec *iov, size_t iov_count,
