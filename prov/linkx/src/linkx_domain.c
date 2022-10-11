@@ -388,6 +388,15 @@ static int lnx_open_core_domains(struct local_prov *prov,
 		if (rc)
 			return rc;
 
+		if (srq_support) {
+			/* special case for CXI provider. We need to turn off tag
+			 * matching HW offload if we're going to support shared
+			 * receive queues.
+			 */
+			if (strstr(ep->lpe_fabric_name, "cxi"))
+				setenv("FI_CXI_RX_MATCH_MODE", "software", 1);
+		}
+
 		rc = fi_domain(ep->lpe_fabric, ep->lpe_fi_info,
 					   &ep->lpe_domain, context);
 		if (rc)

@@ -497,6 +497,7 @@ lnx_add_ep_to_prov(struct local_prov *prov,
 		if (prov->lpv_prov_eps[i])
 			continue;
 		prov->lpv_prov_eps[i] = ep;
+		ep->lpe_parent = prov;
 		prov->lpv_ep_count++;
 		return 0;
 	}
@@ -721,12 +722,19 @@ void ofi_link_fini(void)
 	lnx_prov.cleanup();
 }
 
+#define LNX_MAX_RR_ENTRIES 1024 * 2
+ofi_spin_t global_fslock;
+struct lnx_recv_fs *global_recv_fs;
+
 LNX_INI
 {
 	fi_param_define(&lnx_prov, "srq_support", FI_PARAM_BOOL,
 			"Turns shared receive queue support on and off. By default it is on. "
 			"When SRQ is turned on some Hardware offload capability will not "
 			"work. EX: Hardware Tag matching");
+
+	global_recv_fs = lnx_recv_fs_create(LNX_MAX_RR_ENTRIES, NULL, NULL);
+	ofi_spin_init(&global_fslock);
 
 	return &lnx_prov;
 }

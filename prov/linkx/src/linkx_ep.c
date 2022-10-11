@@ -434,55 +434,214 @@ lnx_ep_nosys_progress(struct util_ep *util_ep)
 	assert(0);
 }
 
-static int lnx_match_msg(struct dlist_entry *item, const void *args)
-{
-	/* TODO */
-	return -FI_ENOSYS;
-}
-
 static inline int
 match_tag(uint64_t tag, uint64_t match_tag, uint64_t ignore)
 {
 	return ((tag | ignore) == (match_tag | ignore));
 }
 
-static int lnx_match_tagged(struct dlist_entry *item, const void *args)
+static bool lnx_addr_match(fi_addr_t addr1, fi_addr_t addr2,
+						   struct fi_ops_srx_peer *peer_ops,
+						   struct fi_peer_match *match_info)
 {
-	struct lnx_match_attr *match_attr = (struct lnx_match_attr *) args;
-	struct lnx_rx_entry *entry = (struct lnx_rx_entry *) item;
+	if (peer_ops->addr_match) {
+		assert(match_info);
+		return peer_ops->addr_match(addr1, match_info);
+	}
+
+	return (addr1 == addr2);
+}
+
+static int lnx_match_common(uint64_t tag1, uint64_t tag2, uint64_t ignore,
+		fi_addr_t cep_addr, fi_addr_t lnx_addr, struct lnx_peer *peer,
+		struct local_prov_ep *cep, struct fi_peer_match *match_info)
+{
+	struct fi_ops_srx_peer *peer_ops;
+	struct local_prov *lp;
+	bool tmatch;
+	int i, j, k;
 
 	/* if a request has no address specified it'll match against any
 	 * rx_entry with a matching tag
 	 *  or
 	 * if an rx_entry has no address specified, it'll match against any
 	 * request with a matching tag
+	 *
+	 * for non tagged messages tags will be set to TAG_ANY so they will
+	 * always match and decision will be made on address only.
 	 */
-	if (match_attr->lm_id == FI_ADDR_UNSPEC ||
-		entry->rx_entry.addr == FI_ADDR_UNSPEC)
-		return match_tag(entry->rx_entry.tag, match_attr->lm_tag,
-						 match_attr->lm_ignore);
+	tmatch = match_tag(tag1, tag2, ignore);
 
-	return (entry->rx_cep == match_attr->lm_cep &&
-			entry->rx_entry.addr == match_attr->lm_id &&
-			match_tag(entry->rx_entry.tag, match_attr->lm_tag,
-					  match_attr->lm_ignore));
+	/* if we're requested to receive from any peer, then tag maching is
+	 * enough. None tagged message will match irregardless.
+	 */
+	if (lnx_addr == FI_ADDR_UNSPEC)
+		return tmatch;
+
+	/* if the core provider didn't do a reverse look up to give us a valid
+	 * source address, it must have given us some match info
+	 */
+	assert(cep_addr == FI_ADDR_UNSPEC && !match_info);
+
+	/* if the address is specified, then we should have a peer and
+	 * a receiving core endpoint and a provider parent
+	 */
+	assert(peer && cep && cep->lpe_parent);
+
+	peer_ops = cep->lpe_srx.peer_ops;
+	lp = cep->lpe_parent;
+
+	for (i = 0; i < LNX_MAX_LOCAL_EPS; i++) {
+		struct lnx_peer_prov *lpp;
+
+		lpp = peer->lp_provs[i];
+		if (!lpp)
+			continue;
+
+		/* we found the peer provider matching our local provider */
+		if (lpp->lpp_prov == lp) {
+			for (j = 0; j < LNX_MAX_LOCAL_EPS; j++) {
+				struct lnx_local2peer_map *lpm = lpp->lpp_map[j];
+				if (!lpm)
+					continue;
+				for (k = 0; k < lpm->addr_count; k++) {
+					fi_addr_t peer_addr = lpm->peer_addrs[k];
+					if (lnx_addr_match(peer_addr, cep_addr,
+									   peer_ops, match_info))
+						return true;
+				}
+			}
+		}
+	}
+
+	return false;
+}
+
+static int lnx_match_unexq(struct dlist_entry *item, const void *args)
+{
+	/* this entry is placed on the SUQ via the lnx_get_tag() path
+	 * and examined in the lnx_process_tag() path */
+	struct lnx_match_attr *match_attr = (struct lnx_match_attr *) args;
+	struct lnx_rx_entry *entry = (struct lnx_rx_entry *) item;
+	struct lnx_peer *peer = match_attr->lm_peer;
+	struct fi_peer_match *match_info = &entry->rx_match_info;
+
+	/* entry refers to the unexpected message received
+	 * entry->rx_entry.tag will be the tag of the message or TAG_UNSPEC
+	 * otherwise
+	 *
+	 * entry->rx_entry.addr will be the address of the peer which sent the
+	 * message or ADDR_UNSPEC if the core provider didn't do a reverse
+	 * lookup.
+	 *
+	 * entry->rx_cep will be set to the core endpoint which received the
+	 * message.
+	 *
+	 * entry->rx_match_info is the core endpoint matching info given to
+	 * LINKx in through the lnx_get_tag() call.
+	 *
+	 * match_attr is filled in by the lnx_process_tag() and contains
+	 * information passed to us by the application
+	 *
+	 * match_attr->lm_peer is the peer looked up via the addr passed by
+	 * the application to LINKx. It is NULL if the addr is ADDR_UNSPEC.
+	 *
+	 * match_attr->lm_tag, match_attr->lm_ignore are the tag and ignore
+	 * bits passed by the application to LINKx via the receive API.
+	 *
+	 * match_attr->lm_addr is the only significant if it's set to
+	 * FI_ADDR_UNSPEC, otherwise it's not used in matching because it's
+	 * the LINKx level address and we need to compare the core level address.
+	 */
+	return lnx_match_common(entry->rx_entry.tag, match_attr->lm_tag,
+			match_attr->lm_ignore, entry->rx_entry.addr,
+			match_attr->lm_addr, peer, entry->rx_cep, match_info);
+}
+
+static int lnx_match_recvq(struct dlist_entry *item, const void *args)
+{
+	struct lnx_match_attr *match_attr = (struct lnx_match_attr *) args;
+	/* this entry is placed on the recvq via the lnx_process_tag() path
+	 * and examined in the lnx_get_tag() path */
+	struct lnx_rx_entry *entry = (struct lnx_rx_entry *) item;
+
+	assert(match_attr->lm_match_info);
+
+	/* entry refers to the receive request waiting for a message
+	 * entry->rx_entry.tag is the tag passed in by the application.
+	 *
+	 * entry->rx_entry.addr is the address passed in by the application.
+	 * This is the LINKx level address. It's only significant if it's set
+	 * to ADDR_UNSPEC. Otherwise, it has already been used to look up the
+	 * peer.
+	 *
+	 * entry->rx_cep is always NULL in this case, as this will only be
+	 * known when the message is received.
+	 *
+	 * entry->rx_match_info is not significant since the core endpoint
+	 * hasn't received a message and therefore no matching info given.
+	 *
+	 * entry->rx_peer is the LINKx peer looked up if a valid address is
+	 * given by the application, otherwise it's NULL.
+	 *
+	 * match_attr information is filled by the lnx_get_tag() callback and
+	 * contains information passed to us by the core endpoint receiving
+	 * the message.
+	 *
+	 * match_attr->rx_peer is not significant because at the lnx_get_tag()
+	 * call there isn't enough information to find what the peer is.
+	 *
+	 * match_attr->lm_tag, match_attr->lm_ignore are the tag and ignore
+	 * bits passed up by the core endpoint receiving the message.
+	 *
+	 * match_attr->lm_addr is the address of the peer which sent the
+	 * message. Set if the core endpoint has done a reverse lookup,
+	 * otherwise set to ADDR_UNSPEC.
+	 *
+	 * match_attr->lm_cep is the core endpoint which received the message.
+	 *
+	 * match_attr->lm_match_info is match information passed by the core
+	 * endpoint to allow us to call back into the core endpoint to match
+	 * the address without anyone having to do a reverse lookup on the AV
+	 * table.
+	 */
+	return lnx_match_common(entry->rx_entry.tag, match_attr->lm_tag,
+			entry->rx_entry.ignore, match_attr->lm_addr,
+			entry->rx_entry.addr, entry->rx_peer, match_attr->lm_cep,
+			match_attr->lm_match_info);
 }
 
 static inline int
-lnx_init_qpair(struct lnx_qpair *qpair, dlist_func_t *match_func)
+lnx_init_queue(struct lnx_queue *q, dlist_func_t *match_func)
 {
 	int rc;
 
-	rc = ofi_spin_init(&qpair->lqp_qlock);
+	rc = ofi_spin_init(&q->lq_qlock);
 	if (rc)
 		return rc;
 
-	dlist_init(&qpair->lqp_recvq);
-	dlist_init(&qpair->lqp_unexq);
+	dlist_init(&q->lq_queue);
 
-	qpair->match_func = match_func;
+	q->lq_match_func = match_func;
 
 	return 0;
+}
+
+static inline int
+lnx_init_qpair(struct lnx_qpair *qpair, dlist_func_t *recvq_match_func,
+			   dlist_func_t *unexq_match_func)
+{
+	int rc = 0;
+
+	rc = lnx_init_queue(&qpair->lqp_recvq, recvq_match_func);
+	if (rc)
+		goto out;
+	rc = lnx_init_queue(&qpair->lqp_unexq, unexq_match_func);
+	if (rc)
+		goto out;
+
+out:
+	return rc;
 }
 
 static inline int
@@ -490,10 +649,10 @@ lnx_init_srq(struct lnx_peer_srq *srq)
 {
 	int rc;
 
-	rc = lnx_init_qpair(&srq->lps_trecv, lnx_match_tagged);
+	rc = lnx_init_qpair(&srq->lps_trecv, lnx_match_recvq, lnx_match_unexq);
 	if (rc)
 		return rc;
-	rc = lnx_init_qpair(&srq->lps_recv, lnx_match_msg);
+	rc = lnx_init_qpair(&srq->lps_recv, lnx_match_recvq, lnx_match_unexq);
 	if (rc)
 		return rc;
 
