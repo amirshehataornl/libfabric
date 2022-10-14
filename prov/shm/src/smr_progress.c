@@ -581,6 +581,8 @@ static struct smr_pend_entry *smr_progress_ipc(struct smr_cmd *cmd,
 	ssize_t hmem_copy_ret;
 	struct ofi_mr_entry *mr_entry;
 	struct smr_domain *domain;
+	enum fi_hmem_iface remote_iface = cmd->msg.data.ipc_info.iface;
+	size_t async_cutoff_size = 0;
 
 	domain = container_of(ep->util_ep.domain, struct smr_domain,
 			      util_domain);
@@ -589,9 +591,9 @@ static struct smr_pend_entry *smr_progress_ipc(struct smr_cmd *cmd,
 	resp = smr_get_ptr(peer_smr, cmd->msg.hdr.src_data);
 
 	//TODO disable IPC if more than 1 interface is initialized
-	assert(iface == cmd->msg.data.ipc_info.iface || iface == FI_HMEM_SYSTEM);
+	assert(iface == remote_iface || iface == FI_HMEM_SYSTEM);
 
-	if (cmd->msg.data.ipc_info.iface == FI_HMEM_ZE) {
+	if (remote_iface == FI_HMEM_ZE) {
 		id = cmd->msg.hdr.id;
 		ipc_device = cmd->msg.data.ipc_info.device;
 		fd = ep->sock_info->peers[id].device_fds[ipc_device];
@@ -606,13 +608,15 @@ static struct smr_pend_entry *smr_progress_ipc(struct smr_cmd *cmd,
 	if (ret)
 		goto out;
 
-	if (cmd->msg.data.ipc_info.iface == FI_HMEM_ZE)
+	if (remote_iface == FI_HMEM_ZE)
 		ptr = (char *) base + (uintptr_t) cmd->msg.data.ipc_info.offset;
 	else
 		ptr = (char *) (uintptr_t) mr_entry->info.ipc_mapped_addr +
 		      (uintptr_t) cmd->msg.data.ipc_info.offset;
 
-	if (cmd->msg.data.ipc_info.iface == FI_HMEM_ROCR) {
+	ofi_get_async_copy_cutoff(remote_iface, &async_cutoff_size);
+	if (remote_iface == FI_HMEM_ROCR &&
+		cmd->msg.hdr.size > async_cutoff_size) {
 		struct smr_pend_entry *ipc_entry;
 		struct fi_peer_rx_entry *rx = rx_entry;
 		*total_len = 0;
@@ -637,18 +641,18 @@ static struct smr_pend_entry *smr_progress_ipc(struct smr_cmd *cmd,
 
 	if (cmd->msg.hdr.op == ofi_op_read_req) {
 		hmem_copy_ret = ofi_copy_from_hmem_iov(ptr, cmd->msg.hdr.size,
-						       cmd->msg.data.ipc_info.iface,
+						       remote_iface,
 						       device, iov, iov_count, 0);
 	} else {
-		hmem_copy_ret = ofi_copy_to_hmem_iov(cmd->msg.data.ipc_info.iface,
+		hmem_copy_ret = ofi_copy_to_hmem_iov(remote_iface,
 						     device, iov, iov_count, 0,
 						     ptr, cmd->msg.hdr.size);
 	}
 
-	if (cmd->msg.data.ipc_info.iface == FI_HMEM_ZE) {
+	if (remote_iface == FI_HMEM_ZE) {
 		close(ipc_fd);
 		/* Truncation error takes precedence over close_handle error */
-		ret = ofi_hmem_close_handle(cmd->msg.data.ipc_info.iface, base);
+		ret = ofi_hmem_close_handle(remote_iface, base);
 	} else {
 		ofi_mr_cache_delete(domain->ipc_cache, mr_entry);
 	}

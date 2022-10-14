@@ -131,6 +131,7 @@ struct ofi_hmem_ops {
 						 size_t *base_length);
 	bool (*is_ipc_enabled)(void);
 	int (*get_ipc_handle_size)(size_t *size);
+	int (*get_async_copy_cutoff)(size_t *size);
 };
 
 extern struct ofi_hmem_ops hmem_ops[];
@@ -166,6 +167,7 @@ int rocr_async_copy_to_dev(uint64_t device, void *dst, const void *src,
 int rocr_async_copy_from_dev(uint64_t device, void *dst, const void *src,
 						size_t size, void *istream, void **ostream);
 int rocr_async_copy_query(void *stream);
+int rocr_get_async_copy_cutoff(size_t *size);
 
 int cuda_copy_to_dev(uint64_t device, void *dev, const void *host, size_t size);
 int cuda_copy_from_dev(uint64_t device, void *host, const void *dev, size_t size);
@@ -299,6 +301,11 @@ static inline int ofi_hmem_no_get_ipc_handle_size(size_t *size)
 	return -FI_ENOSYS;
 }
 
+static inline int ofi_hmem_no_get_async_copy_cutoff(size_t *size)
+{
+	return -FI_ENOSYS;
+}
+
 static inline int ofi_hmem_host_register_noop(void *addr, size_t size)
 {
 	return FI_SUCCESS;
@@ -325,6 +332,7 @@ static inline bool ofi_hmem_p2p_disabled(void)
 	return ofi_hmem_disable_p2p;
 }
 
+int ofi_get_async_copy_cutoff(enum fi_hmem_iface iface, size_t *size);
 ssize_t ofi_async_copy_from_hmem_iov(void *dest, size_t size,
 				enum fi_hmem_iface hmem_iface, uint64_t device,
 				const struct iovec *hmem_iov,

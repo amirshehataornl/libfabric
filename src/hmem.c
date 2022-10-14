@@ -60,6 +60,7 @@ struct ofi_hmem_ops hmem_ops[] = {
 		.get_base_addr = ofi_hmem_no_base_addr,
 		.is_ipc_enabled = ofi_hmem_no_is_ipc_enabled,
 		.get_ipc_handle_size = ofi_hmem_no_get_ipc_handle_size,
+		.get_async_copy_cutoff = ofi_hmem_no_get_async_copy_cutoff,
 	},
 	[FI_HMEM_XPMEM] = {
 		.initialized = false,
@@ -79,6 +80,7 @@ struct ofi_hmem_ops hmem_ops[] = {
 		.get_base_addr = ofi_hmem_no_base_addr,
 		.is_ipc_enabled = ofi_hmem_no_is_ipc_enabled,
 		.get_ipc_handle_size = xpmem_get_handle_size,
+		.get_async_copy_cutoff = ofi_hmem_no_get_async_copy_cutoff,
 	},
 	[FI_HMEM_CUDA] = {
 		.initialized = false,
@@ -98,6 +100,7 @@ struct ofi_hmem_ops hmem_ops[] = {
 		.get_base_addr = cuda_get_base_addr,
 		.is_ipc_enabled = cuda_is_ipc_enabled,
 		.get_ipc_handle_size = cuda_get_ipc_handle_size,
+		.get_async_copy_cutoff = ofi_hmem_no_get_async_copy_cutoff,
 	},
 	[FI_HMEM_ROCR] = {
 		.initialized = false,
@@ -117,6 +120,7 @@ struct ofi_hmem_ops hmem_ops[] = {
 		.get_base_addr = rocr_get_base_addr,
 		.is_ipc_enabled = rocr_is_ipc_enabled,
 		.get_ipc_handle_size = rocr_get_ipc_handle_size,
+		.get_async_copy_cutoff = rocr_get_async_copy_cutoff,
 	},
 	[FI_HMEM_ZE] = {
 		.initialized = false,
@@ -136,6 +140,7 @@ struct ofi_hmem_ops hmem_ops[] = {
 		.get_base_addr = ze_hmem_get_base_addr,
 		.is_ipc_enabled = ze_hmem_p2p_enabled,
 		.get_ipc_handle_size = ze_hmem_get_ipc_handle_size,
+		.get_async_copy_cutoff = ofi_hmem_no_get_async_copy_cutoff,
 	},
 	[FI_HMEM_NEURON] = {
 		.initialized = false,
@@ -147,6 +152,7 @@ struct ofi_hmem_ops hmem_ops[] = {
 		.async_copy_to_hmem = ofi_no_async_memcpy,
 		.async_copy_from_hmem = ofi_no_async_memcpy,
 		.async_copy_query = ofi_no_async_copy_query,
+		.get_async_copy_cutoff = ofi_hmem_no_get_async_copy_cutoff,
 	},
 	[FI_HMEM_SYNAPSEAI] = {
 		.initialized = false,
@@ -165,6 +171,7 @@ struct ofi_hmem_ops hmem_ops[] = {
 		.get_base_addr = synapseai_get_base_addr,
 		.is_ipc_enabled = synapseai_is_ipc_enabled,
 		.get_ipc_handle_size = ofi_hmem_no_get_ipc_handle_size,
+		.get_async_copy_cutoff = ofi_hmem_no_get_async_copy_cutoff,
 	},
 };
 
@@ -242,6 +249,11 @@ static ssize_t ofi_copy_hmem_iov_buf(enum fi_hmem_iface hmem_iface, uint64_t dev
 		done += len;
 	}
 	return done;
+}
+
+int ofi_get_async_copy_cutoff(enum fi_hmem_iface iface, size_t *size)
+{
+	return hmem_ops[iface].get_async_copy_cutoff(size);
 }
 
 ssize_t ofi_async_copy_from_hmem_iov(void *dest, size_t size,

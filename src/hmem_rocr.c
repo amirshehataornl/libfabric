@@ -41,7 +41,7 @@
 #if HAVE_ROCR
 
 #define HSA_MAX_SIGNALS 512
-#define D2H_THRESHOLD 16384
+#define DEVICE_THRESHOLD 524288
 #define H2D_THRESHOLD 1048576
 
 struct ofi_hsa_signal_info {
@@ -435,17 +435,6 @@ rocr_dev_async_copy(void *dst, const void *src, size_t size,
 		ipc_signal->addr = NULL;
 	/* device to host */
 	} else if (!src_local && dst_local) {
-		size_t d2h_thresh;
-
-		if (fi_param_get_size_t(&core_prov, "rocr_d2h_threshold",
-							&d2h_thresh) < 0)
-			d2h_thresh = D2H_THRESHOLD;
-		if (size < d2h_thresh) {
-			memcpy(dst, src, size);
-			ofi_hsa_signal_store_screlease(ipc_signal->sig, 0);
-			ipc_signal->addr = NULL;
-			goto finish;
-		}
 		hsa_ret = ofi_hsa_amd_memory_lock(dst, size, NULL, 0, &dst_hsa_ptr);
 		if (hsa_ret != HSA_STATUS_SUCCESS) {
 			ret = -FI_EINVAL;
@@ -469,7 +458,6 @@ rocr_dev_async_copy(void *dst, const void *src, size_t size,
 		goto fail;
 	}
 
-finish:
 	*ostream = ipc_signal;
 
 	return 0;
@@ -545,6 +533,18 @@ bool rocr_is_addr_valid(const void *addr, uint64_t *device, uint64_t *flags)
 int rocr_get_ipc_handle_size(size_t *size)
 {
 	*size = sizeof(hsa_amd_ipc_memory_t);
+	return FI_SUCCESS;
+}
+
+int rocr_get_async_copy_cutoff(size_t *size)
+{
+	size_t cpy_thresh = DEVICE_THRESHOLD;
+
+	fi_param_get_size_t(&core_prov, "rocr_device_threshold",
+						&cpy_thresh);
+
+	*size = cpy_thresh;
+
 	return FI_SUCCESS;
 }
 
@@ -760,7 +760,11 @@ int rocr_hmem_init(void)
 	int ret;
 	int log_level;
 
-	fi_param_define(NULL, "rocr_d2h_threshold", FI_PARAM_SIZE_T,
+	fi_param_define(NULL, "rocr_d2d_threshold", FI_PARAM_SIZE_T,
+			"Threshold for switching to hsa memcpy for device-to-host copies."
+			" (Default 16384");
+
+	fi_param_define(NULL, "rocr_device_threshold", FI_PARAM_SIZE_T,
 			"Threshold for switching to hsa memcpy for device-to-host copies."
 			" (Default 16384");
 
@@ -937,6 +941,11 @@ int rocr_async_copy_from_dev(uint64_t device, void *dst, const void *src,
 }
 
 int rocr_async_copy_query(void *stream)
+{
+	return -FI_ENOSYS;
+}
+
+int rocr_get_async_copy_cutoff(size_t *size)
 {
 	return -FI_ENOSYS;
 }
