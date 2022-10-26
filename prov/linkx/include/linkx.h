@@ -426,6 +426,8 @@ int lnx_select_send_pathway(struct lnx_peer *lp, struct lnx_mem_desc *desc,
 	core_attr.iface = ofi_get_hmem_iface(iov->iov_base,
 										 &core_attr.device.reserved,
 										 &flags);
+	if (core_attr.iface == FI_HMEM_SYSTEM)
+		return 0;
 	core_attr.addr = *addr;
 	core_attr.mr_iov = iov;
 	core_attr.iov_count = iov_count;
