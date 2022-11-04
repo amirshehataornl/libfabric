@@ -295,6 +295,7 @@ static ssize_t smr_generic_sendmsg(struct smr_ep *ep, const struct iovec *iov,
 	size_t total_len;
 	bool use_ipc;
 	int proto;
+	struct smr_cmd *cmd;
 
 	assert(iov_count <= SMR_IOV_LIMIT);
 
@@ -306,7 +307,8 @@ static ssize_t smr_generic_sendmsg(struct smr_ep *ep, const struct iovec *iov,
 	peer_smr = smr_peer_region(ep->region, id);
 
 	pthread_spin_lock(&peer_smr->lock);
-	if (!peer_smr->cmd_cnt || smr_peer_data(ep->region)[id].sar_status) {
+	if (!ofi_atomic_get64(&peer_smr->cmd_cnt) ||
+	    smr_peer_data(ep->region)[id].sar_status) {
 		ret = -FI_EAGAIN;
 		goto unlock_region;
 	}
@@ -326,11 +328,15 @@ static ssize_t smr_generic_sendmsg(struct smr_ep *ep, const struct iovec *iov,
 	proto = smr_select_proto(use_ipc, smr_cma_enabled(ep, peer_smr), iface,
 				 op, total_len, op_flags);
 
+	cmd = smr_get_cmd(peer_smr);
 	ret = smr_proto_ops[proto](ep, peer_smr, id, peer_id, op, tag, data, op_flags,
-				   iface, device, iov, iov_count, total_len, context);
-	if (ret)
+				   iface, device, iov, iov_count, total_len,
+				   context, cmd);
+	if (ret) {
+		smr_discard_cmd(peer_smr, cmd);
 		goto unlock_cq;
-
+	}
+	smr_queue_cmd(peer_smr, cmd, NULL);
 	smr_signal(peer_smr);
 
 	if (proto != smr_src_inline && proto != smr_src_inject)
@@ -398,6 +404,7 @@ static ssize_t smr_generic_inject(struct fid_ep *ep_fid, const void *buf,
 	ssize_t ret = 0;
 	struct iovec msg_iov;
 	int proto;
+	struct smr_cmd *cmd;
 
 	assert(len <= SMR_INJECT_SIZE);
 
@@ -414,14 +421,18 @@ static ssize_t smr_generic_inject(struct fid_ep *ep_fid, const void *buf,
 	peer_smr = smr_peer_region(ep->region, id);
 
 	pthread_spin_lock(&peer_smr->lock);
-	if (!peer_smr->cmd_cnt || smr_peer_data(ep->region)[id].sar_status) {
+	if (!ofi_atomic_get64(&peer_smr->cmd_cnt) ||
+	    smr_peer_data(ep->region)[id].sar_status) {
 		ret = -FI_EAGAIN;
 		goto unlock;
 	}
 
+	cmd = smr_get_cmd(peer_smr);
 	proto = len <= SMR_MSG_DATA_LEN ? smr_src_inline : smr_src_inject;
 	ret = smr_proto_ops[proto](ep, peer_smr, id, peer_id, op, tag, data,
-			op_flags, FI_HMEM_SYSTEM, 0, &msg_iov, 1, len, NULL);
+			op_flags, FI_HMEM_SYSTEM, 0, &msg_iov, 1, len,
+			NULL, cmd);
+	smr_queue_cmd(peer_smr, cmd, NULL);
 
 	assert(!ret);
 	ofi_ep_tx_cntr_inc_func(&ep->util_ep, op);

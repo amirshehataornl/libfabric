@@ -240,7 +240,7 @@ struct smr_region {
 	struct smr_map	*map;
 
 	size_t		total_size;
-	size_t		cmd_cnt; /* Doubles as a tracker for number of cmds AND
+	ofi_atomic64_t	cmd_cnt; /* Doubles as a tracker for number of cmds AND
 				    number of inject buffers available for use,
 				    to ensure 1:1 ratio of cmds to inject bufs.
 				    Might not always be paired consistently with
@@ -251,6 +251,7 @@ struct smr_region {
 	/* offsets from start of smr_region */
 	size_t		cmd_queue_offset;
 	size_t		resp_queue_offset;
+	size_t		cmd_pool_offset;
 	size_t		inject_pool_offset;
 	size_t		sar_pool_offset;
 	size_t		peer_data_offset;
@@ -286,7 +287,16 @@ struct smr_sar_buf {
 	uint8_t		buf[SMR_SAR_SIZE];
 };
 
-OFI_DECLARE_CIRQUE(struct smr_cmd, smr_cmd_queue);
+struct smr_cmd_entry {
+	uint64_t offset;
+	/* RMA protocol requires two commands */
+	uint64_t rma_offset;
+};
+
+/* Queue of offsets of the command blocks obtained from the command pool
+ * freestack 
+ */
+OFI_DECLARE_CIRQUE(struct smr_cmd_entry, smr_cmd_queue);
 OFI_DECLARE_CIRQUE(struct smr_resp, smr_resp_queue);
 
 static inline struct smr_region *smr_peer_region(struct smr_region *smr, int i)
@@ -300,6 +310,10 @@ static inline struct smr_cmd_queue *smr_cmd_queue(struct smr_region *smr)
 static inline struct smr_resp_queue *smr_resp_queue(struct smr_region *smr)
 {
 	return (struct smr_resp_queue *) ((char *) smr + smr->resp_queue_offset);
+}
+static inline struct smr_freestack *smr_cmd_pool(struct smr_region *smr)
+{
+	return (struct smr_freestack *) ((char *) smr + smr->cmd_pool_offset);
 }
 static inline struct smr_freestack *smr_inject_pool(struct smr_region *smr)
 {
@@ -336,9 +350,9 @@ struct smr_attr {
 
 size_t smr_calculate_size_offsets(size_t tx_count, size_t rx_count,
 				  size_t *cmd_offset, size_t *resp_offset,
-				  size_t *inject_offset, size_t *sar_offset,
-				  size_t *peer_offset, size_t *name_offset,
-				  size_t *sock_offset);
+				  size_t *cmdp_offset, size_t *inject_offset,
+				  size_t *sar_offset, size_t *peer_offset,
+				  size_t *name_offset, size_t *sock_offset);
 void	smr_cma_check(struct smr_region *region, struct smr_region *peer_region);
 void	smr_cleanup(void);
 int	smr_map_create(const struct fi_provider *prov, int peer_count,
