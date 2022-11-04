@@ -452,44 +452,58 @@ static inline void smr_queue_cmd(struct smr_region *smr,
 				 struct smr_cmd *cmd,
 				 struct smr_cmd *rma_cmd)
 {
-	/* this operation is protected by the smr->lock */
 	struct smr_cmd_entry *entry;
 
+	pthread_spin_lock(&smr->lock);
 	entry = ofi_cirque_next(smr_cmd_queue(smr));
 	entry->offset = smr_get_offset(smr, cmd);
 	if (rma_cmd)
 		entry->rma_offset = smr_get_offset(smr, rma_cmd);
 	ofi_cirque_commit(smr_cmd_queue(smr));
 	ofi_atomic_dec64(&smr->cmd_cnt);
+	pthread_spin_unlock(&smr->lock);
 }
 
 static inline struct smr_cmd *
 smr_get_cmd(struct smr_region *smr)
 {
-	/* this operation is protected by the smr->lock */
-	return smr_freestack_pop(smr_cmd_pool(smr));
+	struct smr_cmd *cmd;
+
+	pthread_spin_lock(&smr->lock);
+	cmd = smr_freestack_pop(smr_cmd_pool(smr));
+	pthread_spin_unlock(&smr->lock);
+
+	return cmd;
 }
 
 static inline struct smr_inject_buf *
 smr_get_txbuf(struct smr_region *smr)
 {
-	return smr_freestack_pop(smr_inject_pool(smr));
+	struct smr_inject_buf * txbuf;
+
+	pthread_spin_lock(&smr->lock);
+	txbuf = smr_freestack_pop(smr_inject_pool(smr));
+	pthread_spin_unlock(&smr->lock);
+
+	return txbuf;
 }
 
 static inline void
 smr_discard_cmd(struct smr_region *smr,
 		struct smr_cmd *cmd)
 {
-	/* this operation is protected by the smr->lock */
+	pthread_spin_lock(&smr->lock);
 	smr_freestack_push(smr_cmd_pool(smr), cmd);
+	pthread_spin_unlock(&smr->lock);
 }
 
 static inline void
 smr_discard_txbuf(struct smr_region *smr,
 		  struct smr_inject_buf *tx_buf)
 {
-	/* this operation is protected by the smr->lock */
+	pthread_spin_lock(&smr->lock);
 	smr_freestack_push(smr_inject_pool(smr), tx_buf);
+	pthread_spin_unlock(&smr->lock);
 }
 
 int smr_unexp_start(struct fi_peer_rx_entry *rx_entry);

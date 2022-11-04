@@ -306,12 +306,9 @@ static ssize_t smr_generic_sendmsg(struct smr_ep *ep, const struct iovec *iov,
 	peer_id = smr_peer_data(ep->region)[id].addr.id;
 	peer_smr = smr_peer_region(ep->region, id);
 
-	pthread_spin_lock(&peer_smr->lock);
 	if (!ofi_atomic_get64(&peer_smr->cmd_cnt) ||
-	    smr_peer_data(ep->region)[id].sar_status) {
-		ret = -FI_EAGAIN;
-		goto unlock_region;
-	}
+	    smr_peer_data(ep->region)[id].sar_status)
+		return -FI_EAGAIN;
 
 	ofi_spin_lock(&ep->tx_lock);
 	iface = smr_get_mr_hmem_iface(ep->util_ep.domain, desc, &device);
@@ -351,8 +348,6 @@ static ssize_t smr_generic_sendmsg(struct smr_ep *ep, const struct iovec *iov,
 
 unlock_cq:
 	ofi_spin_unlock(&ep->tx_lock);
-unlock_region:
-	pthread_spin_unlock(&peer_smr->lock);
 	return ret;
 }
 
@@ -420,12 +415,9 @@ static ssize_t smr_generic_inject(struct fid_ep *ep_fid, const void *buf,
 	peer_id = smr_peer_data(ep->region)[id].addr.id;
 	peer_smr = smr_peer_region(ep->region, id);
 
-	pthread_spin_lock(&peer_smr->lock);
 	if (!ofi_atomic_get64(&peer_smr->cmd_cnt) ||
-	    smr_peer_data(ep->region)[id].sar_status) {
-		ret = -FI_EAGAIN;
-		goto unlock;
-	}
+	    smr_peer_data(ep->region)[id].sar_status)
+		return -FI_EAGAIN;
 
 	cmd = smr_get_cmd(peer_smr);
 	proto = len <= SMR_MSG_DATA_LEN ? smr_src_inline : smr_src_inject;
@@ -438,8 +430,6 @@ static ssize_t smr_generic_inject(struct fid_ep *ep_fid, const void *buf,
 	ofi_ep_tx_cntr_inc_func(&ep->util_ep, op);
 
 	smr_signal(peer_smr);
-unlock:
-	pthread_spin_unlock(&peer_smr->lock);
 
 	return ret;
 }

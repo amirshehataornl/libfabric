@@ -202,12 +202,9 @@ static ssize_t smr_generic_atomic(struct smr_ep *ep,
 	peer_id = smr_peer_data(ep->region)[id].addr.id;
 	peer_smr = smr_peer_region(ep->region, id);
 
-	pthread_spin_lock(&peer_smr->lock);
 	if (ofi_atomic_get64(&peer_smr->cmd_cnt) < 2 ||
-	    smr_peer_data(ep->region)[id].sar_status) {
-		ret = -FI_EAGAIN;
-		goto unlock_region;
-	}
+	    smr_peer_data(ep->region)[id].sar_status)
+		return -FI_EAGAIN;
 
 	ofi_spin_lock(&ep->tx_lock);
 	total_len = ofi_datatype_size(datatype) * ofi_total_ioc_cnt(ioc, count);
@@ -272,8 +269,6 @@ static ssize_t smr_generic_atomic(struct smr_ep *ep,
 	smr_signal(peer_smr);
 unlock_cq:
 	ofi_spin_unlock(&ep->tx_lock);
-unlock_region:
-	pthread_spin_unlock(&peer_smr->lock);
 	return ret;
 }
 
@@ -355,11 +350,10 @@ static ssize_t smr_atomic_inject(struct fid_ep *ep_fid, const void *buf,
 	peer_id = smr_peer_data(ep->region)[id].addr.id;
 	peer_smr = smr_peer_region(ep->region, id);
 
-	pthread_spin_lock(&peer_smr->lock);
 	if (ofi_atomic_get64(&peer_smr->cmd_cnt) < 2 ||
 	    smr_peer_data(ep->region)[id].sar_status) {
 		ret = -FI_EAGAIN;
-		goto unlock_region;
+		goto out;
 	}
 
 	total_len = count * ofi_datatype_size(datatype);
@@ -384,7 +378,7 @@ static ssize_t smr_atomic_inject(struct fid_ep *ep_fid, const void *buf,
 				NULL, 0, cmd);
 		if (ret) {
 			smr_discard_cmd(peer_smr, cmd);
-			goto unlock_region;
+			goto out;
 		}
 	}
 
@@ -394,8 +388,7 @@ static ssize_t smr_atomic_inject(struct fid_ep *ep_fid, const void *buf,
 	smr_signal(peer_smr);
 
 	ofi_ep_tx_cntr_inc_func(&ep->util_ep, ofi_op_atomic);
-unlock_region:
-	pthread_spin_unlock(&peer_smr->lock);
+out:
 	return ret;
 }
 
