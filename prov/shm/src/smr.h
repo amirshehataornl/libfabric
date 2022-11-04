@@ -366,7 +366,7 @@ typedef ssize_t (*smr_proto_func)(struct smr_ep *ep, struct smr_region *peer_smr
 		int64_t id, int64_t peer_id, uint32_t op, uint64_t tag,
 		uint64_t data, uint64_t op_flags, enum fi_hmem_iface iface,
 		uint64_t device, const struct iovec *iov, size_t iov_count,
-		size_t total_len, void *context);
+		size_t total_len, void *context, struct smr_cmd *cmd);
 extern smr_proto_func smr_proto_ops[smr_src_max];
 
 int smr_write_err_comp(struct util_cq *cq, void *context,
@@ -446,6 +446,50 @@ static inline int smr_cma_loop(pid_t pid, struct iovec *local,
 		ofi_consume_iov(local, &local_cnt, (size_t) ret);
 		ofi_consume_iov(remote, &remote_cnt, (size_t) ret);
 	}
+}
+
+static inline void smr_queue_cmd(struct smr_region *smr,
+				 struct smr_cmd *cmd,
+				 struct smr_cmd *rma_cmd)
+{
+	/* this operation is protected by the smr->lock */
+	struct smr_cmd_entry *entry;
+
+	entry = ofi_cirque_next(smr_cmd_queue(smr));
+	entry->offset = smr_get_offset(smr, cmd);
+	if (rma_cmd)
+		entry->rma_offset = smr_get_offset(smr, rma_cmd);
+	ofi_cirque_commit(smr_cmd_queue(smr));
+	ofi_atomic_dec64(&smr->cmd_cnt);
+}
+
+static inline struct smr_cmd *
+smr_get_cmd(struct smr_region *smr)
+{
+	/* this operation is protected by the smr->lock */
+	return smr_freestack_pop(smr_cmd_pool(smr));
+}
+
+static inline struct smr_inject_buf *
+smr_get_txbuf(struct smr_region *smr)
+{
+	return smr_freestack_pop(smr_inject_pool(smr));
+}
+
+static inline void
+smr_discard_cmd(struct smr_region *smr,
+		struct smr_cmd *cmd)
+{
+	/* this operation is protected by the smr->lock */
+	smr_freestack_push(smr_cmd_pool(smr), cmd);
+}
+
+static inline void
+smr_discard_txbuf(struct smr_region *smr,
+		  struct smr_inject_buf *tx_buf)
+{
+	/* this operation is protected by the smr->lock */
+	smr_freestack_push(smr_inject_pool(smr), tx_buf);
 }
 
 int smr_unexp_start(struct fi_peer_rx_entry *rx_entry);
