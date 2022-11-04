@@ -209,11 +209,9 @@ static void smr_send_name(struct smr_ep *ep, int64_t id)
 
 	peer_smr = smr_peer_region(ep->region, id);
 
-	pthread_spin_lock(&peer_smr->lock);
-
 	if (smr_peer_data(ep->region)[id].name_sent ||
 	    !ofi_atomic_get64(&peer_smr->cmd_cnt))
-		goto out;
+		return;
 
 	cmd = smr_get_cmd(peer_smr);
 	tx_buf = smr_get_txbuf(peer_smr);
@@ -230,9 +228,6 @@ static void smr_send_name(struct smr_ep *ep, int64_t id)
 	smr_peer_data(ep->region)[id].name_sent = 1;
 	smr_queue_cmd(peer_smr, cmd, NULL);
 	smr_signal(peer_smr);
-
-out:
-	pthread_spin_unlock(&peer_smr->lock);
 }
 
 int64_t smr_verify_peer(struct smr_ep *ep, fi_addr_t fi_addr)
@@ -723,8 +718,10 @@ static ssize_t smr_do_sar(struct smr_ep *ep, struct smr_region *peer_smr, int64_
 	pend = ofi_freestack_pop(ep->pend_fs);
 
 	smr_generic_format(cmd, peer_id, op, tag, data, op_flags);
+	pthread_spin_lock(&peer_smr->lock);
 	ret = smr_format_sar(ep, cmd, iface, device, iov, iov_count, total_len,
 			     ep->region, peer_smr, id, pend, resp);
+	pthread_spin_unlock(&peer_smr->lock);
 	if (ret) {
 		ofi_freestack_push(ep->pend_fs, pend);
 		return ret;

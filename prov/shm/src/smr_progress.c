@@ -102,12 +102,14 @@ static int smr_progress_resp_entry(struct smr_ep *ep, struct smr_resp *resp,
 			close(pending->fd);
 		break;
 	case smr_src_sar:
+		pthread_spin_lock(&ep->region->lock);
 		sar_buf = smr_freestack_get_entry_from_index(
 		    smr_sar_pool(peer_smr), pending->cmd.msg.data.sar[0]);
 		if (pending->bytes_done == pending->cmd.msg.hdr.size &&
 		    (resp->status == SMR_STATUS_SAR_FREE ||
 		     resp->status == SMR_STATUS_SUCCESS)) {
 			resp->status = SMR_STATUS_SUCCESS;
+			pthread_spin_unlock(&ep->region->lock);
 			break;
 		}
 
@@ -126,8 +128,11 @@ static int smr_progress_resp_entry(struct smr_ep *ep, struct smr_resp *resp,
 					pending->iov_count, &pending->bytes_done,
 					&pending->next, pending);
 		if (pending->bytes_done != pending->cmd.msg.hdr.size ||
-		    resp->status != SMR_STATUS_SAR_FREE)
+		    resp->status != SMR_STATUS_SAR_FREE) {
+			pthread_spin_unlock(&ep->region->lock);
 			return -FI_EAGAIN;
+		}
+		pthread_spin_unlock(&ep->region->lock);
 
 		resp->status = SMR_STATUS_SUCCESS;
 		break;
@@ -194,13 +199,9 @@ static int smr_progress_resp_entry(struct smr_ep *ep, struct smr_resp *resp,
 			"unidentified operation type\n");
 	}
 
-	//Skip locking on transfers from self since we already have
-	//the ep->region->lock
-	if (peer_smr != ep->region) {
-		if (pthread_spin_trylock(&peer_smr->lock)) {
-			smr_signal(ep->region);
-			return -FI_EAGAIN;
-		}
+	if (pthread_spin_trylock(&peer_smr->lock)) {
+		smr_signal(ep->region);
+		return -FI_EAGAIN;
 	}
 
 	ofi_atomic_inc64(&peer_smr->cmd_cnt);
@@ -215,8 +216,7 @@ static int smr_progress_resp_entry(struct smr_ep *ep, struct smr_resp *resp,
 		smr_peer_data(ep->region)[pending->peer_id].sar_status = 0;
 	}
 
-	if (peer_smr != ep->region)
-		pthread_spin_unlock(&peer_smr->lock);
+	pthread_spin_unlock(&peer_smr->lock);
 
 	return FI_SUCCESS;
 }
@@ -227,7 +227,6 @@ static void smr_progress_resp(struct smr_ep *ep)
 	struct smr_tx_entry *pending;
 	int ret;
 
-	pthread_spin_lock(&ep->region->lock);
 	ofi_spin_lock(&ep->tx_lock);
 	while (!ofi_cirque_isempty(smr_resp_queue(ep->region))) {
 		resp = ofi_cirque_head(smr_resp_queue(ep->region));
@@ -255,7 +254,6 @@ static void smr_progress_resp(struct smr_ep *ep)
 		ofi_cirque_discard(smr_resp_queue(ep->region));
 	}
 	ofi_spin_unlock(&ep->tx_lock);
-	pthread_spin_unlock(&ep->region->lock);
 }
 
 static int smr_progress_inline(struct smr_cmd *cmd, enum fi_hmem_iface iface,
@@ -743,10 +741,8 @@ int smr_unexp_start(struct fi_peer_rx_entry *rx_entry)
 	struct smr_cmd_ctx *cmd_ctx = rx_entry->peer_context;
 	int ret;
 
-	pthread_spin_lock(&cmd_ctx->ep->region->lock);
 	ret = smr_start_common(cmd_ctx->ep, &cmd_ctx->cmd, rx_entry);
 	ofi_freestack_push(cmd_ctx->ep->cmd_ctx_fs, cmd_ctx);
-	pthread_spin_unlock(&cmd_ctx->ep->region->lock);
 
 	return ret;
 }
@@ -780,8 +776,8 @@ static void smr_progress_connreq(struct smr_ep *ep, struct smr_cmd *cmd)
 	smr_peer_data(peer_smr)[cmd->msg.hdr.id].addr.id = idx;
 	smr_peer_data(ep->region)[idx].addr.id = cmd->msg.hdr.id;
 
-	smr_discard_cmd(ep->region, cmd);
 	smr_discard_txbuf(ep->region, tx_buf);
+	smr_discard_cmd(ep->region, cmd);
 	ofi_atomic_inc64(&ep->region->cmd_cnt);
 	assert(ep->region->map->num_peers > 0);
 	ep->region->max_sar_buf_per_peer = SMR_MAX_PEERS /
@@ -1049,12 +1045,17 @@ static void smr_progress_cmd(struct smr_ep *ep)
 	struct smr_cmd_entry cmd_entry;
 	int ret = 0;
 
-	pthread_spin_lock(&ep->region->lock);
-	while (!ofi_cirque_isempty(smr_cmd_queue(ep->region))) {
+	while (1) {
+		pthread_spin_lock(&ep->region->lock);
+		if (ofi_cirque_isempty(smr_cmd_queue(ep->region))) {
+			pthread_spin_unlock(&ep->region->lock);
+			return;
+		}
 		memcpy(&cmd_entry,
 		       ofi_cirque_head(smr_cmd_queue(ep->region)),
 		       sizeof(cmd_entry));
 		ofi_cirque_discard(smr_cmd_queue(ep->region));
+		pthread_spin_unlock(&ep->region->lock);
 
 		cmd = smr_get_ptr(ep->region, cmd_entry.offset);
 
@@ -1098,7 +1099,6 @@ static void smr_progress_cmd(struct smr_ep *ep)
 			break;
 		}
 	}
-	pthread_spin_unlock(&ep->region->lock);
 }
 
 static void smr_progress_sar_list(struct smr_ep *ep)

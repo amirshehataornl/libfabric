@@ -233,8 +233,9 @@ struct smr_region {
 	uint32_t	max_sar_buf_per_peer;
 	void		*base_addr;
 	pthread_spinlock_t	lock; /* lock for shm access
-				 Must hold smr->lock before tx/rx cq locks
-				 in order to progress or post recv */
+				 if both ep->tx_lock and this lock need to
+				 held, then ep->tx_lock needs to be held
+				 first */
 	ofi_atomic32_t	signal;
 
 	struct smr_map	*map;
