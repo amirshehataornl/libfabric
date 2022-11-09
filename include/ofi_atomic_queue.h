@@ -105,10 +105,10 @@ static inline void name ## _free(struct name *aq)		\
 	free(aq);						\
 }								\
 static inline int name ## _tx_next(struct name *aq,		\
-		entrytype **buf, size_t *pos)			\
+		entrytype **buf, int64_t *pos)			\
 {								\
 	struct name ## _entry *e;				\
-	size_t diff, seq;					\
+	int64_t diff, seq;					\
 	*pos = atomic_load_explicit(&aq->enqueue_pos.val,	\
 				    memory_order_relaxed);	\
 	for (;;) {						\
@@ -133,9 +133,9 @@ static inline int name ## _tx_next(struct name *aq,		\
 	return FI_SUCCESS;					\
 }								\
 static inline int name ## _rx_next(struct name *aq,		\
-		entrytype **buf, size_t *pos)			\
+		entrytype **buf, int64_t *pos)			\
 {								\
-	size_t diff, seq;					\
+	int64_t diff, seq;					\
 	struct name ## _entry *e;				\
 	*pos = atomic_load_explicit(&aq->dequeue_pos.val,	\
 			memory_order_relaxed);			\
@@ -160,7 +160,7 @@ static inline int name ## _rx_next(struct name *aq,		\
 	return FI_SUCCESS;					\
 }								\
 static inline void name ## _tx_advance(entrytype *buf,		\
-				size_t pos)			\
+				int64_t pos)			\
 {								\
 	struct name ## _entry *e;				\
 	e = container_of(buf, struct name ## _entry, buf);	\
@@ -169,11 +169,12 @@ static inline void name ## _tx_advance(entrytype *buf,		\
 }								\
 static inline void name ## _rx_advance (struct name *aq,	\
 			entrytype *buf,				\
-			size_t pos)				\
+			int64_t pos)				\
 {								\
 	struct name ## _entry *e;				\
 	e = container_of(buf, struct name ## _entry, buf);	\
-	atomic_store_explicit(&e->seq.val, pos + aq->size_mask,	\
+	atomic_store_explicit(&e->seq.val,			\
+			      pos + aq->size_mask + 1,		\
 			      memory_order_release);		\
 }								\
 void dummy ## name (void) /* work-around global ; scope */

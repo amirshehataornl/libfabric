@@ -204,8 +204,9 @@ static struct fi_ops_ep smr_ep_ops = {
 static void smr_send_name(struct smr_ep *ep, int64_t id)
 {
 	struct smr_region *peer_smr;
-	struct smr_cmd *cmd;
+	struct smr_cmd_entry *cmd;
 	struct smr_inject_buf *tx_buf;
+	int64_t pos;
 
 	peer_smr = smr_peer_region(ep->region, id);
 
@@ -213,20 +214,20 @@ static void smr_send_name(struct smr_ep *ep, int64_t id)
 	    !ofi_atomic_get64(&peer_smr->cmd_cnt))
 		return;
 
-	cmd = smr_get_cmd(peer_smr);
+	cmd = smr_get_cmd(peer_smr, &pos);
 	tx_buf = smr_get_txbuf(peer_smr);
 
-	cmd->msg.hdr.op = SMR_OP_MAX + ofi_ctrl_connreq;
-	cmd->msg.hdr.id = id;
-	cmd->msg.hdr.data = ep->region->pid;
+	cmd->cmd.msg.hdr.op = SMR_OP_MAX + ofi_ctrl_connreq;
+	cmd->cmd.msg.hdr.id = id;
+	cmd->cmd.msg.hdr.data = ep->region->pid;
 
-	cmd->msg.hdr.src_data = smr_get_offset(peer_smr, tx_buf);
+	cmd->cmd.msg.hdr.src_data = smr_get_offset(peer_smr, tx_buf);
 
-	cmd->msg.hdr.size = strlen(ep->name) + 1;
-	memcpy(tx_buf->data, ep->name, cmd->msg.hdr.size);
+	cmd->cmd.msg.hdr.size = strlen(ep->name) + 1;
+	memcpy(tx_buf->data, ep->name, cmd->cmd.msg.hdr.size);
 
 	smr_peer_data(ep->region)[id].name_sent = 1;
-	smr_queue_cmd(peer_smr, cmd, NULL);
+	smr_queue_cmd(cmd, pos);
 	smr_signal(peer_smr);
 }
 

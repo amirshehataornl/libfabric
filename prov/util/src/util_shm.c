@@ -95,14 +95,13 @@ void smr_cma_check(struct smr_region *smr, struct smr_region *peer_smr)
 
 size_t smr_calculate_size_offsets(size_t tx_count, size_t rx_count,
 				  size_t *cmd_offset, size_t *resp_offset,
-				  size_t *cmdp_offset, size_t *inject_offset,
-				  size_t *sar_offset, size_t *peer_offset,
-				  size_t *name_offset, size_t *sock_offset)
+				  size_t *inject_offset, size_t *sar_offset,
+				  size_t *peer_offset, size_t *name_offset,
+				  size_t *sock_offset)
 {
 	size_t cmd_queue_offset, resp_queue_offset, inject_pool_offset;
 	size_t sar_pool_offset, peer_data_offset, ep_name_offset;
 	size_t tx_size, rx_size, total_size, sock_name_offset;
-	size_t cmd_pool_offset;
 
 	tx_size = roundup_power_of_two(tx_count);
 	rx_size = roundup_power_of_two(rx_count);
@@ -111,10 +110,9 @@ size_t smr_calculate_size_offsets(size_t tx_count, size_t rx_count,
 	resp_queue_offset = ofi_get_aligned_size(sizeof(struct smr_region), 16);
 	cmd_queue_offset = resp_queue_offset + sizeof(struct smr_resp_queue) +
 			     sizeof(struct smr_resp) * tx_size;
-	cmd_pool_offset = cmd_queue_offset + sizeof(struct smr_cmd_queue) +
-			     sizeof(struct smr_cmd_entry) * rx_size;
-	inject_pool_offset = cmd_pool_offset +
-		freestack_size(sizeof(struct smr_cmd), rx_size);
+	inject_pool_offset = cmd_queue_offset +
+				sizeof(struct smr_cmd_queue) +
+				sizeof(struct smr_cmd_queue_entry) * rx_size;
 	sar_pool_offset = inject_pool_offset +
 		freestack_size(sizeof(struct smr_inject_buf), rx_size);
 	peer_data_offset = sar_pool_offset +
@@ -126,8 +124,6 @@ size_t smr_calculate_size_offsets(size_t tx_count, size_t rx_count,
 
 	if (cmd_offset)
 		*cmd_offset = cmd_queue_offset;
-	if (cmdp_offset)
-		*cmdp_offset = cmd_pool_offset;
 	if (resp_offset)
 		*resp_offset = resp_queue_offset;
 	if (inject_offset)
@@ -203,7 +199,7 @@ int smr_create(const struct fi_provider *prov, struct smr_map *map,
 	struct smr_ep_name *ep_name;
 	size_t total_size, cmd_queue_offset, peer_data_offset;
 	size_t resp_queue_offset, inject_pool_offset, name_offset;
-	size_t sar_pool_offset, sock_name_offset, cmd_pool_offset;
+	size_t sar_pool_offset, sock_name_offset;
 	int fd, ret, i;
 	void *mapped_addr;
 	size_t tx_size, rx_size;
@@ -211,10 +207,9 @@ int smr_create(const struct fi_provider *prov, struct smr_map *map,
 	tx_size = roundup_power_of_two(attr->tx_count);
 	rx_size = roundup_power_of_two(attr->rx_count);
 	total_size = smr_calculate_size_offsets(tx_size, rx_size, &cmd_queue_offset,
-					&resp_queue_offset, &cmd_pool_offset,
-					&inject_pool_offset, &sar_pool_offset,
-					&peer_data_offset, &name_offset,
-					&sock_name_offset);
+					&resp_queue_offset, &inject_pool_offset,
+					&sar_pool_offset, &peer_data_offset,
+					&name_offset, &sock_name_offset);
 
 	fd = shm_open(attr->name, O_RDWR | O_CREAT | O_EXCL, S_IRUSR | S_IWUSR);
 	if (fd < 0) {
@@ -281,7 +276,6 @@ int smr_create(const struct fi_provider *prov, struct smr_map *map,
 	(*smr)->total_size = total_size;
 	(*smr)->cmd_queue_offset = cmd_queue_offset;
 	(*smr)->resp_queue_offset = resp_queue_offset;
-	(*smr)->cmd_pool_offset = cmd_pool_offset;
 	(*smr)->inject_pool_offset = inject_pool_offset;
 	(*smr)->sar_pool_offset = sar_pool_offset;
 	(*smr)->peer_data_offset = peer_data_offset;
@@ -292,8 +286,6 @@ int smr_create(const struct fi_provider *prov, struct smr_map *map,
 
 	smr_resp_queue_init(smr_resp_queue(*smr), tx_size);
 	smr_cmd_queue_init(smr_cmd_queue(*smr), rx_size);
-	smr_freestack_init(smr_cmd_pool(*smr), rx_size,
-			sizeof(struct smr_cmd));
 	smr_freestack_init(smr_inject_pool(*smr), rx_size,
 			sizeof(struct smr_inject_buf));
 	smr_freestack_init(smr_sar_pool(*smr), SMR_MAX_PEERS,

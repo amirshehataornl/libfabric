@@ -295,7 +295,8 @@ static ssize_t smr_generic_sendmsg(struct smr_ep *ep, const struct iovec *iov,
 	size_t total_len;
 	bool use_ipc;
 	int proto;
-	struct smr_cmd *cmd;
+	struct smr_cmd_entry *cmd;
+	int64_t pos;
 
 	assert(iov_count <= SMR_IOV_LIMIT);
 
@@ -308,6 +309,10 @@ static ssize_t smr_generic_sendmsg(struct smr_ep *ep, const struct iovec *iov,
 
 	if (!ofi_atomic_get64(&peer_smr->cmd_cnt) ||
 	    smr_peer_data(ep->region)[id].sar_status)
+		return -FI_EAGAIN;
+
+	cmd = smr_get_cmd(peer_smr, &pos);
+	if (!cmd)
 		return -FI_EAGAIN;
 
 	ofi_spin_lock(&ep->tx_lock);
@@ -325,15 +330,14 @@ static ssize_t smr_generic_sendmsg(struct smr_ep *ep, const struct iovec *iov,
 	proto = smr_select_proto(use_ipc, smr_cma_enabled(ep, peer_smr), iface,
 				 op, total_len, op_flags);
 
-	cmd = smr_get_cmd(peer_smr);
 	ret = smr_proto_ops[proto](ep, peer_smr, id, peer_id, op, tag, data, op_flags,
 				   iface, device, iov, iov_count, total_len,
-				   context, cmd);
+				   context, &cmd->cmd);
 	if (ret) {
-		smr_discard_cmd(peer_smr, cmd);
+		smr_discard_cmd(peer_smr, cmd, pos);
 		goto unlock_cq;
 	}
-	smr_queue_cmd(peer_smr, cmd, NULL);
+	smr_queue_cmd(cmd, pos);
 	smr_signal(peer_smr);
 
 	if (proto != smr_src_inline && proto != smr_src_inject)
@@ -399,7 +403,8 @@ static ssize_t smr_generic_inject(struct fid_ep *ep_fid, const void *buf,
 	ssize_t ret = 0;
 	struct iovec msg_iov;
 	int proto;
-	struct smr_cmd *cmd;
+	struct smr_cmd_entry *cmd;
+	int64_t pos;
 
 	assert(len <= SMR_INJECT_SIZE);
 
@@ -419,12 +424,14 @@ static ssize_t smr_generic_inject(struct fid_ep *ep_fid, const void *buf,
 	    smr_peer_data(ep->region)[id].sar_status)
 		return -FI_EAGAIN;
 
-	cmd = smr_get_cmd(peer_smr);
+	cmd = smr_get_cmd(peer_smr, &pos);
+	if (!cmd)
+		return -FI_EAGAIN;
 	proto = len <= SMR_MSG_DATA_LEN ? smr_src_inline : smr_src_inject;
 	ret = smr_proto_ops[proto](ep, peer_smr, id, peer_id, op, tag, data,
 			op_flags, FI_HMEM_SYSTEM, 0, &msg_iov, 1, len,
-			NULL, cmd);
-	smr_queue_cmd(peer_smr, cmd, NULL);
+			NULL, &cmd->cmd);
+	smr_queue_cmd(cmd, pos);
 
 	assert(!ret);
 	ofi_ep_tx_cntr_inc_func(&ep->util_ep, op);
