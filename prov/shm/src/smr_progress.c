@@ -102,14 +102,12 @@ static int smr_progress_resp_entry(struct smr_ep *ep, struct smr_resp *resp,
 			close(pending->fd);
 		break;
 	case smr_src_sar:
-		pthread_spin_lock(&ep->region->lock);
 		sar_buf = smr_freestack_get_entry_from_index(
 		    smr_sar_pool(peer_smr), pending->cmd.msg.data.sar[0]);
 		if (pending->bytes_done == pending->cmd.msg.hdr.size &&
 		    (resp->status == SMR_STATUS_SAR_FREE ||
 		     resp->status == SMR_STATUS_SUCCESS)) {
 			resp->status = SMR_STATUS_SUCCESS;
-			pthread_spin_unlock(&ep->region->lock);
 			break;
 		}
 
@@ -129,10 +127,8 @@ static int smr_progress_resp_entry(struct smr_ep *ep, struct smr_resp *resp,
 					&pending->next, pending);
 		if (pending->bytes_done != pending->cmd.msg.hdr.size ||
 		    resp->status != SMR_STATUS_SAR_FREE) {
-			pthread_spin_unlock(&ep->region->lock);
 			return -FI_EAGAIN;
 		}
-		pthread_spin_unlock(&ep->region->lock);
 
 		resp->status = SMR_STATUS_SUCCESS;
 		break;
@@ -199,23 +195,18 @@ static int smr_progress_resp_entry(struct smr_ep *ep, struct smr_resp *resp,
 			"unidentified operation type\n");
 	}
 
-	if (pthread_spin_trylock(&peer_smr->lock)) {
-		smr_signal(ep->region);
-		return -FI_EAGAIN;
-	}
-
 	ofi_atomic_inc64(&peer_smr->cmd_cnt);
 	if (tx_buf) {
-		smr_freestack_push(smr_inject_pool(peer_smr), tx_buf);
+		smr_discard_txbuf(peer_smr, tx_buf);
 	} else if (sar_buf) {
+		pthread_spin_lock(&peer_smr->lock);
 		for (i = pending->cmd.msg.data.buf_batch_size - 1; i >= 0; i--) {
 			smr_freestack_push_by_index(smr_sar_pool(peer_smr),
 					pending->cmd.msg.data.sar[i]);
 		}
+		pthread_spin_unlock(&peer_smr->lock);
 		smr_peer_data(ep->region)[pending->peer_id].sar_status = 0;
 	}
-
-	pthread_spin_unlock(&peer_smr->lock);
 
 	return FI_SUCCESS;
 }
@@ -456,7 +447,11 @@ static struct smr_sar_entry *smr_progress_sar(struct smr_cmd *cmd,
 	memcpy(sar_iov, iov, sizeof(*iov) * iov_count);
 	(void) ofi_truncate_iov(sar_iov, &iov_count, cmd->msg.hdr.size);
 
+	ofi_ep_lock_acquire(&ep->util_ep);
 	sar_entry = ofi_freestack_pop(ep->sar_fs);
+	sar_entry->in_use = true;
+	dlist_insert_tail(&sar_entry->entry, &ep->sar_list);
+	ofi_ep_lock_release(&ep->util_ep);
 
 	if (cmd->msg.hdr.op == ofi_op_read_req)
 		smr_try_progress_to_sar(ep, peer_smr, smr_sar_pool(ep->region),
@@ -467,12 +462,16 @@ static struct smr_sar_entry *smr_progress_sar(struct smr_cmd *cmd,
 				smr_sar_pool(ep->region), resp, cmd, iface,
 				device, sar_iov, iov_count, total_len, &next,
 				sar_entry);
+	ofi_ep_lock_acquire(&ep->util_ep);
+	sar_entry->in_use = false;
 
 	if (*total_len == cmd->msg.hdr.size) {
+		dlist_remove(&sar_entry->entry);
 		ofi_freestack_push(ep->sar_fs, sar_entry);
+		ofi_ep_lock_release(&ep->util_ep);
 		return NULL;
 	}
-
+	ofi_ep_lock_release(&ep->util_ep);
 	sar_entry->cmd = *cmd;
 	sar_entry->bytes_done = *total_len;
 	sar_entry->next = next;
@@ -481,7 +480,6 @@ static struct smr_sar_entry *smr_progress_sar(struct smr_cmd *cmd,
 	sar_entry->rx_entry = rx_entry ? rx_entry : NULL;
 	sar_entry->iface = iface;
 	sar_entry->device = device;
-	dlist_insert_tail(&sar_entry->entry, &ep->sar_list);
 	*total_len = cmd->msg.hdr.size;
 	return sar_entry;
 }
@@ -1110,9 +1108,13 @@ static void smr_progress_sar_list(struct smr_ep *ep)
 	uint64_t comp_flags;
 	int ret;
 
-	pthread_spin_lock(&ep->region->lock);
+	ofi_ep_lock_acquire(&ep->util_ep);
 	dlist_foreach_container_safe(&ep->sar_list, struct smr_sar_entry,
 				     sar_entry, entry, tmp) {
+		if (sar_entry->in_use)
+			continue;
+		sar_entry->in_use = true;
+		ofi_ep_lock_release(&ep->util_ep);
 		peer_smr = smr_peer_region(ep->region, sar_entry->cmd.msg.hdr.id);
 		resp = smr_get_ptr(peer_smr, sar_entry->cmd.msg.hdr.src_data);
 		if (sar_entry->cmd.msg.hdr.op == ofi_op_read_req)
@@ -1150,13 +1152,18 @@ static void smr_progress_sar_list(struct smr_ep *ep)
 				FI_WARN(&smr_prov, FI_LOG_EP_CTRL,
 					"unable to process rx completion\n");
 			}
-			dlist_remove(&sar_entry->entry);
 			if (sar_entry->rx_entry)
 				smr_get_peer_srx(ep)->owner_ops->free_entry(sar_entry->rx_entry);
+
+			ofi_ep_lock_acquire(&ep->util_ep);
+			dlist_remove(&sar_entry->entry);
 			ofi_freestack_push(ep->sar_fs, sar_entry);
+		} else {
+			ofi_ep_lock_acquire(&ep->util_ep);
+			sar_entry->in_use = false;
 		}
 	}
-	pthread_spin_unlock(&ep->region->lock);
+	ofi_ep_lock_release(&ep->util_ep);
 }
 
 void smr_ep_progress(struct util_ep *util_ep)
