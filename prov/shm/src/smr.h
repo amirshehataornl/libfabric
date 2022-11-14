@@ -147,6 +147,7 @@ struct smr_sar_entry {
 	size_t			iov_count;
 	enum fi_hmem_iface	iface;
 	uint64_t		device;
+	bool			in_use;
 };
 
 struct smr_cq {
