@@ -212,7 +212,6 @@ static int smr_progress_resp_entry(struct smr_ep *ep, struct smr_resp *resp,
 			smr_freestack_push_by_index(smr_sar_pool(peer_smr),
 					pending->cmd.msg.data.sar[i]);
 		}
-		peer_smr->sar_cnt++;
 		smr_peer_data(ep->region)[pending->peer_id].sar_status = 0;
 	}
 
