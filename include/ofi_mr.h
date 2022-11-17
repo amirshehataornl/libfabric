@@ -58,6 +58,7 @@ struct ofi_mr_info {
 	struct iovec iov;
 	enum fi_hmem_iface iface;
 	uint64_t device;
+	uint64_t id;
 	void     *ipc_mapped_addr;
 	uint8_t  ipc_handle[MAX_IPC_HANDLE_SIZE];
 };

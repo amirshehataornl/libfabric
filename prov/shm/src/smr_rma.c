@@ -80,7 +80,7 @@ static ssize_t smr_rma_fast(struct smr_ep *ep, struct smr_region *peer_smr,
 
 	if (ep->region->xpmem_cap_self == SMR_VMA_CAP_ON &&
 		xpmem->cap == SMR_VMA_CAP_ON) {
-		ret = smr_xpmem_loop(ep, xpmem, vma_iovec, iov_count, rma_iovec,
+		ret = smr_xpmem_loop(ep, xpmem, peer_id, vma_iovec, iov_count, rma_iovec,
 				rma_count, 0, total_len, op == ofi_op_write);
 	} else {
 		ret = smr_cma_loop(peer_smr->pid, vma_iovec, iov_count, rma_iovec,

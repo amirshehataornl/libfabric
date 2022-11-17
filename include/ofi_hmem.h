@@ -65,6 +65,7 @@ struct ipc_info {
 	uint64_t	base_length;
 	uint64_t	device;
 	uint64_t	offset;
+	uint64_t	id;
 	uint8_t		ipc_handle[MAX_IPC_HANDLE_SIZE];
 };
 

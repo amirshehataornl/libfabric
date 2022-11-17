@@ -157,6 +157,7 @@ int ofi_ipc_cache_search(struct ofi_mr_cache *cache, struct ipc_info *ipc_info,
 	info.iov.iov_base = (void *) (uintptr_t) ipc_info->base_addr;
 	info.iov.iov_len = ipc_info->base_length;
 	info.iface = ipc_info->iface;
+	info.id = ipc_info->id;
 
 	ipc_handle_size = ofi_hmem_get_ipc_handle_size(info.iface);
 	assert(ipc_handle_size);

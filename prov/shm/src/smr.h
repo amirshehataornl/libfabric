@@ -429,7 +429,7 @@ static inline bool smr_ze_ipc_enabled(struct smr_region *smr,
 }
 
 #if HAVE_XPMEM
-static inline int smr_xpmem_loop(struct smr_ep *ep, struct xpmem_client *xpmem,
+static inline int smr_xpmem_loop(struct smr_ep *ep, struct xpmem_client *xpmem, int64_t id,
 			struct iovec *local, unsigned long local_cnt, struct iovec *remote,
 			unsigned long remote_cnt, unsigned long flags, size_t total, bool write)
 {
@@ -453,7 +453,7 @@ static inline int smr_xpmem_loop(struct smr_ep *ep, struct xpmem_client *xpmem,
 		key.iface = FI_HMEM_XPMEM,
 		key.base_addr = (uintptr_t) remote[i].iov_base;
 		key.base_length = remote[i].iov_len;
-		key.offset = 0;
+		key.id = id;
 		xpmem_addr.apid = xpmem->apid;
 		xpmem_addr.offset = (uintptr_t)remote[i].iov_base;
 		memcpy(key.ipc_handle, &xpmem_addr, sizeof(xpmem_addr));
