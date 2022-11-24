@@ -434,12 +434,14 @@ static inline int smr_xpmem_loop(struct smr_ep *ep, struct xpmem_client *xpmem, 
 			unsigned long remote_cnt, unsigned long flags, size_t total, bool write)
 {
 	int ret, i;
+	uint64_t offset;
 	ssize_t copy_ret;
 	void *mapped_addr;
 	struct ipc_info key;
 	struct xpmem_addr xpmem_addr;
 	struct smr_domain *domain;
 	struct ofi_mr_entry *mr_entry;
+	long page_size = ofi_get_page_size();
 
 	domain = container_of(ep->util_ep.domain, struct smr_domain,
 			      util_domain);
@@ -447,22 +449,25 @@ static inline int smr_xpmem_loop(struct smr_ep *ep, struct xpmem_client *xpmem, 
 	assert(local_cnt == remote_cnt);
 
 	for (i = 0; i < remote_cnt; i++) {
-		if (remote[i].iov_base == local[i].iov_base)
-			continue;
 		memset(&key, 0, sizeof(key));
-		key.iface = FI_HMEM_XPMEM,
-		key.base_addr = (uintptr_t) remote[i].iov_base;
-		key.base_length = remote[i].iov_len;
+		key.iface = FI_HMEM_XPMEM;
+		key.base_addr = (uintptr_t) ofi_get_page_start(remote[i].iov_base,
+							page_size);
+		key.base_length =
+		  (uintptr_t) ofi_get_page_end(remote[i].iov_base + remote[i].iov_len,
+						   page_size) - key.base_addr;
 		key.id = id;
+		offset = (uintptr_t)((uintptr_t) remote[i].iov_base - key.base_addr);
 		xpmem_addr.apid = xpmem->apid;
-		xpmem_addr.offset = (uintptr_t)remote[i].iov_base;
+		xpmem_addr.offset = (uintptr_t)key.base_addr;
 		memcpy(key.ipc_handle, &xpmem_addr, sizeof(xpmem_addr));
 
 		ret = ofi_ipc_cache_search(domain->xpmem_cache, &key, &mr_entry);
 		if (ret)
 			return ret;
 
-		mapped_addr = mr_entry->info.ipc_mapped_addr;
+		mapped_addr = (char*) (uintptr_t)mr_entry->info.ipc_mapped_addr +
+		  offset;
 
 		if (write)
 			copy_ret = ofi_copy_from_hmem_iov(mapped_addr,
@@ -476,7 +481,7 @@ static inline int smr_xpmem_loop(struct smr_ep *ep, struct xpmem_client *xpmem, 
 		if (copy_ret != local[i].iov_len)
 			return -FI_EIO;
 
-		 ofi_mr_cache_delete(domain->xpmem_cache, mr_entry);
+		ofi_mr_cache_delete(domain->xpmem_cache, mr_entry);
 	}
 
 	return 0;
