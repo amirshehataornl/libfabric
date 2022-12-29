@@ -1032,9 +1032,11 @@ void ofi_fabric_remove(struct util_fabric *fabric);
  * Utility Providers
  */
 
-#define OFI_NAME_DELIM	';'
+#define OFI_NAME_LINKX_DELIM ':'
+#define OFI_NAME_DELIM ';'
 #define OFI_UTIL_PREFIX "ofi_"
 #define OFI_OFFLOAD_PREFIX "off_"
+#define OFI_LINKX "linkx"
 
 static inline int ofi_has_util_prefix(const char *str)
 {
@@ -1044,6 +1046,16 @@ static inline int ofi_has_util_prefix(const char *str)
 static inline int ofi_has_offload_prefix(const char *str)
 {
 	return !strncasecmp(str, OFI_OFFLOAD_PREFIX, strlen(OFI_OFFLOAD_PREFIX));
+}
+
+static inline int ofi_is_linkx(const char *str)
+{
+	return !strncasecmp(str, OFI_LINKX, strlen(OFI_LINKX));
+}
+
+static inline int ofi_is_linked(const char *str)
+{
+	return (strcasestr(str, OFI_LINKX)) ? 1 : 0;
 }
 
 int ofi_get_core_info(uint32_t version, const char *node, const char *service,
@@ -1061,6 +1073,7 @@ int ofi_get_core_info_fabric(const struct fi_provider *prov,
 			     struct fi_info **core_info);
 
 
+char *ofi_strdup_link_append(const char *head, const char *tail);
 char *ofi_strdup_append(const char *head, const char *tail);
 // char *ofi_strdup_head(const char *str);
 // char *ofi_strdup_tail(const char *str);

@@ -156,7 +156,7 @@ static struct fi_ops_fabric lnx_fabric_ops = {
 };
 
 struct fi_provider lnx_prov = {
-	.name = OFI_UTIL_PREFIX "linkx",
+	.name = OFI_LINKX,
 	.version = OFI_VERSION_DEF_PROV,
 	.fi_version = OFI_VERSION_LATEST,
 	.getinfo = lnx_getinfo,
@@ -182,14 +182,15 @@ struct lnx_fi_info_cache {
  * This cache gets cleared after we use the ones we need, or when the
  * library exists, if LINKx is never used.
  */
-static struct lnx_fi_info_cache lnx_fi_info_cache[LNX_MAX_LOCAL_EPS] = {0};
+#define LNX_MAX_CACHE_PROV 1024
+static struct lnx_fi_info_cache lnx_fi_info_cache[LNX_MAX_CACHE_PROV] = {0};
 
 static void lnx_free_info_cache(void)
 {
 	int i;
 
 	/* free the cache if there are any left */
-	for (i = 0; i < LNX_MAX_LOCAL_EPS; i++) {
+	for (i = 0; i < LNX_MAX_CACHE_PROV; i++) {
 		if (lnx_fi_info_cache[i].cache_info) {
 			fi_freeinfo(lnx_fi_info_cache[i].cache_info);
 			lnx_fi_info_cache[i].cache_info = NULL;
@@ -202,7 +203,7 @@ static int lnx_cache_info(struct fi_info *info, int idx)
 	struct fi_info *prov_info;
 
 	/* exceeded the number of supported providers */
-	if (idx >= LNX_MAX_LOCAL_EPS)
+	if (idx >= LNX_MAX_CACHE_PROV)
 		return -FI_ENODATA;
 
 	/* stash this fi info */
@@ -224,7 +225,7 @@ lnx_get_cache_entry_by_prov(char *prov_name)
 	int i;
 
 	/* free the cache if there are any left */
-	for (i = 0; i < LNX_MAX_LOCAL_EPS; i++) {
+	for (i = 0; i < LNX_MAX_CACHE_PROV; i++) {
 		struct fi_info *info = lnx_fi_info_cache[i].cache_info;
 
 		if (info && info->fabric_attr) {
@@ -248,7 +249,7 @@ lnx_get_cache_entry_by_dom(char *domain_name)
 	int i;
 
 	/* free the cache if there are any left */
-	for (i = 0; i < LNX_MAX_LOCAL_EPS; i++) {
+	for (i = 0; i < LNX_MAX_CACHE_PROV; i++) {
 		struct fi_info *info = lnx_fi_info_cache[i].cache_info;
 
 		if (info && info->domain_attr) {
@@ -310,7 +311,7 @@ static int lnx_generate_info(struct fi_info *ci, struct fi_info **info,
 			}
 			fi->fabric_attr->name = s;
 
-			if (asprintf(&s, "shm+%s;%s", domain, lnx_info.domain_attr->name) < 0) {
+			if (asprintf(&s, "shm+%s:%s", domain, lnx_info.domain_attr->name) < 0) {
 				free(domain);
 				fi_freeinfo(fi);
 				goto err;
@@ -445,7 +446,7 @@ int lnx_parse_prov_name(char *name, char *shm, char *prov)
 
 	sub1 = name;
 
-	/* the name comes in as: shm+<prov>;ofi_linkx */
+	/* the name comes in as: shm+<prov>:ofi_linkx */
 	delim = strchr(sub1, '+');
 	if (!delim)
 		return -FI_ENODATA;
@@ -453,7 +454,7 @@ int lnx_parse_prov_name(char *name, char *shm, char *prov)
 	sub1_len = delim - sub1;
 
 	sub2 = delim + 1;
-	delim = strchr(sub2, ';');
+	delim = strchr(sub2, ':');
 	if (!delim)
 		return -FI_ENODATA;
 
@@ -569,6 +570,7 @@ int lnx_fabric(struct fi_fabric_attr *attr, struct fid_fabric **fabric,
 	char shm[FI_NAME_MAX];
 	char prov[FI_NAME_MAX];
 	int rc;
+
 	/*
 	 * provider: shm1+cxi;ofi_linkx
 	 *     fabric: ofi_lnx_fabric_3

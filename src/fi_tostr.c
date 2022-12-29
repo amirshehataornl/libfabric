@@ -230,6 +230,7 @@ static void ofi_tostr_caps(char *buf, size_t len, uint64_t caps)
 	IFFLAGSTRN(caps, FI_NAMED_RX_CTX, len);
 	IFFLAGSTRN(caps, FI_DIRECTED_RECV, len);
 	IFFLAGSTRN(caps, FI_HMEM, len);
+	IFFLAGSTRN(caps, FI_LINK, len);
 
 	ofi_remove_comma(buf);
 }
