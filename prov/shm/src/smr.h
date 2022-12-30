@@ -434,7 +434,7 @@ static inline int smr_xpmem_loop(struct smr_ep *ep, struct xpmem_client *xpmem, 
 			unsigned long remote_cnt, unsigned long flags, size_t total, bool write)
 {
 	int ret, i;
-	uint64_t offset;
+	uint64_t offset, copy_len;
 	ssize_t copy_ret;
 	void *mapped_addr;
 	struct ipc_info key;
@@ -469,16 +469,19 @@ static inline int smr_xpmem_loop(struct smr_ep *ep, struct xpmem_client *xpmem, 
 		mapped_addr = (char*) (uintptr_t)mr_entry->info.ipc_mapped_addr +
 		  offset;
 
+		copy_len = (local[i].iov_len <= key.base_length - offset) ?
+		  local[i].iov_len : key.base_length - offset;
+
 		if (write)
 			copy_ret = ofi_copy_from_hmem_iov(mapped_addr,
-								local[i].iov_len, FI_HMEM_XPMEM,
+								copy_len, FI_HMEM_XPMEM,
 								0, &local[i], 1, 0);
 		else
 			copy_ret = ofi_copy_to_hmem_iov(FI_HMEM_XPMEM,
 								0, &local[i], 1, 0,
-								mapped_addr, local[i].iov_len);
+								mapped_addr, copy_len);
 
-		if (copy_ret != local[i].iov_len)
+		if (copy_ret != copy_len)
 			return -FI_EIO;
 
 		ofi_mr_cache_delete(domain->xpmem_cache, mr_entry);
