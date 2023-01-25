@@ -107,6 +107,8 @@ struct ofi_hmem_ops {
 	bool initialized;
 	int (*init)(void);
 	int (*cleanup)(void);
+	int (*create_async_copy_event)(uint64_t device, void **ev);
+	int (*free_async_copy_event)(uint64_t device, void *ev);
 	int (*async_copy_to_hmem)(uint64_t device, void *dest, const void *src,
 			    size_t size, void **stream);
 	int (*async_copy_from_hmem)(uint64_t device, void *dest,
@@ -147,6 +149,8 @@ int rocr_open_handle(void **handle, size_t size, uint64_t device,
 		     void **ipc_ptr);
 int rocr_close_handle(void *ipc_ptr);
 bool rocr_is_ipc_enabled(void);
+int rocr_create_async_copy_event(uint64_t device, void **ev);
+int rocr_free_async_copy_event(uint64_t device, void *ev);
 int rocr_async_copy_to_dev(uint64_t device, void *dst, const void *src,
 			  size_t size, void **stream);
 int rocr_async_copy_from_dev(uint64_t device, void *dst, const void *src,
@@ -246,6 +250,16 @@ static inline int ofi_memcpy(uint64_t device, void *dest, const void *src,
 	return FI_SUCCESS;
 }
 
+static inline int ofi_no_create_async_copy_event(uint64_t device, void **ev)
+{
+	return -FI_ENOSYS;
+}
+
+static inline int ofi_no_free_async_copy_event(uint64_t device, void *ev)
+{
+	return -FI_ENOSYS;
+}
+
 static inline int ofi_no_async_memcpy(uint64_t device, void *dest, const void *src,
 			     size_t size, void **stream)
 {
@@ -315,18 +329,24 @@ static inline bool ofi_hmem_p2p_disabled(void)
 	return ofi_hmem_disable_p2p;
 }
 
+int ofi_create_async_copy_event(enum fi_hmem_iface iface, uint64_t device,
+				void **ev);
+
+int ofi_free_async_copy_event(enum fi_hmem_iface iface, uint64_t device,
+			      void *ev);
+
 ssize_t ofi_async_copy_from_hmem_iov(void *dest, size_t size,
 				enum fi_hmem_iface hmem_iface, uint64_t device,
 				const struct iovec *hmem_iov,
 				size_t hmem_iov_count, uint64_t hmem_iov_offset,
-				void **stream);
+				void *event);
 
 ssize_t ofi_async_copy_to_hmem_iov(enum fi_hmem_iface hmem_iface, uint64_t device,
 				const struct iovec *hmem_iov,
 				size_t hmem_iov_count, uint64_t hmem_iov_offset,
-				const void *src, size_t size, void **stream);
+				const void *src, size_t size, void *event);
 
-int ofi_async_copy_query(enum fi_hmem_iface iface, void *stream);
+int ofi_async_copy_query(enum fi_hmem_iface iface, void *event);
 
 ssize_t ofi_copy_from_hmem_iov(void *dest, size_t size,
 			       enum fi_hmem_iface hmem_iface, uint64_t device,

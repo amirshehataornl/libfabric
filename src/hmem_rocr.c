@@ -48,6 +48,7 @@
 struct ofi_hsa_signal_info {
 	hsa_signal_t sig;
 	void *addr;
+	bool in_use;
 };
 
 struct ofi_hsa_stream {
@@ -394,13 +395,43 @@ int rocr_copy_to_dev(uint64_t device, void *dest, const void *src,
 	return ret;
 }
 
+int rocr_create_async_copy_event(uint64_t device, void **ev)
+{
+	struct ofi_hsa_stream *s;
+
+	pthread_spin_lock(&fs_lock);
+	s = ofi_freestack_pop(ipc_stream_fs);
+	pthread_spin_unlock(&fs_lock);
+	if (!s)
+		return -FI_ENOMEM;
+
+	memset(s, 0, sizeof(*s));
+
+	*ev = s;
+
+	return FI_SUCCESS;
+}
+
+int rocr_free_async_copy_event(uint64_t device, void *ev)
+{
+	struct ofi_hsa_stream *s = ev;
+	int i;
+
+	pthread_spin_lock(&fs_lock);
+	for (i = 0; i < s->num_signals; i++)
+		ofi_freestack_push(ipc_signal_fs, s->sinfo[i]);
+	ofi_freestack_push(ipc_stream_fs, s);
+	pthread_spin_unlock(&fs_lock);
+
+	return FI_SUCCESS;
+}
+
 static int
-rocr_dev_async_copy(void *dst, const void *src, size_t size,
-		    void **stream)
+rocr_dev_async_copy(void *dst, const void *src, size_t size, void *ev)
 {
 	void *src_hsa_ptr;
 	void *dst_hsa_ptr;
-	int ret, i;
+	int ret;
 	hsa_status_t hsa_ret;
 	struct ofi_hsa_stream *s;
 	struct ofi_hsa_signal_info *ipc_signal;
@@ -410,8 +441,10 @@ rocr_dev_async_copy(void *dst, const void *src, size_t size,
 	hsa_agent_t agents[2];
 	bool src_local, dst_local;
 
-	if (!stream)
+	if (!ev)
 		return -FI_EINVAL;
+
+	s = ev;
 
 	ret = rocr_host_memory_ptr((void *)src, &src_hsa_ptr, &agents[0],
 				   NULL, NULL, &src_local);
@@ -423,21 +456,11 @@ rocr_dev_async_copy(void *dst, const void *src, size_t size,
 	if (ret != FI_SUCCESS)
 		return ret;
 
-	if (!*stream) {
-		pthread_spin_lock(&fs_lock);
-		s = ofi_freestack_pop(ipc_stream_fs);
-		pthread_spin_unlock(&fs_lock);
-		if (!s)
-			return -FI_ENOMEM;
-		memset(s, 0, sizeof(*s));
-	} else {
-		s = *stream;
-	}
-
 	pthread_spin_lock(&fs_lock);
 	s->sinfo[s->num_signals] = ofi_freestack_pop(ipc_signal_fs);
 	pthread_spin_unlock(&fs_lock);
 	ipc_signal = s->sinfo[s->num_signals];
+	ipc_signal->in_use = true;
 
 	s->num_signals++;
 
@@ -490,16 +513,10 @@ rocr_dev_async_copy(void *dst, const void *src, size_t size,
 		goto fail;
 	}
 
-	*stream = s;
-
 	return 0;
 
 fail:
-	pthread_spin_lock(&fs_lock);
-	for (i = 0; i < s->num_signals; i++)
-		ofi_freestack_push(ipc_signal_fs, s->sinfo[i]);
-	ofi_freestack_push(ipc_stream_fs, s);
-	pthread_spin_unlock(&fs_lock);
+	rocr_free_async_copy_event(0, s);
 finish:
 	return ret;
 }
@@ -516,16 +533,16 @@ int rocr_async_copy_from_dev(uint64_t device, void *dst, const void *src,
 	return rocr_dev_async_copy(dst, src, size, stream);
 }
 
-int rocr_async_copy_query(void *stream)
+int rocr_async_copy_query(void *ev)
 {
-	struct ofi_hsa_stream *s = stream;
+	struct ofi_hsa_stream *s = ev;
 	hsa_signal_value_t v;
 	int i;
 
 	for (i = 0; i < s->num_signals; i++) {
 		void *addr;
 
-		if (!s->sinfo[i])
+		if (!s->sinfo[i] || !s->sinfo[i]->in_use)
 			continue;
 
 		v = ofi_hsa_signal_load_scacquire(s->sinfo[i]->sig);
@@ -536,14 +553,8 @@ int rocr_async_copy_query(void *stream)
 		if (addr)
 			ofi_hsa_amd_memory_unlock(addr);
 
-		pthread_spin_lock(&fs_lock);
-		ofi_freestack_push(ipc_signal_fs, s->sinfo[i]);
-		pthread_spin_unlock(&fs_lock);
-		s->sinfo[i] = NULL;
+		s->sinfo[i]->in_use = false;
 	}
-	pthread_spin_lock(&fs_lock);
-	ofi_freestack_push(ipc_stream_fs, s);
-	pthread_spin_unlock(&fs_lock);
 
 	return FI_SUCCESS;
 }
@@ -971,6 +982,16 @@ int rocr_get_ipc_handle_size(size_t *size)
 }
 
 int rocr_get_base_addr(const void *ptr, void **base, size_t *size)
+{
+	return -FI_ENOSYS;
+}
+
+int rocr_create_async_copy_event(uint64_t device, void **ev)
+{
+	return -FI_ENOSYS;
+}
+
+int rocr_free_async_copy_event(uint64_t device, void *ev)
 {
 	return -FI_ENOSYS;
 }
