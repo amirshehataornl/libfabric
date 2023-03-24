@@ -51,6 +51,7 @@ common_srcs =				\
 	src/hmem_neuron.c		\
 	src/hmem_synapseai.c		\
 	src/hmem_ipc_cache.c	        \
+	src/p2p_shm.c			\
 	src/common.c			\
 	src/enosys.c			\
 	src/rbtree.c			\

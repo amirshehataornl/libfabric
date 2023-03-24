@@ -45,6 +45,7 @@
 #include <ofi_rbuf.h>
 #include <ofi_tree.h>
 #include <ofi_hmem.h>
+#include <ofi_mr.h>
 #include <ofi_atomic_queue.h>
 
 #include <rdma/providers/fi_prov.h>
@@ -62,6 +63,47 @@ extern "C" {
 #define SMR_FLAG_HMEM_ENABLED (1 << 3)
 
 #define SMR_CMD_SIZE		256	/* align with 64-byte cache line */
+
+enum ofi_shm_p2p_type {
+	FI_SHM_P2P_XPMEM,
+	FI_SHM_P2P_CMA,
+	FI_SHM_P2P_DSA,
+};
+
+struct ofi_shm_p2p_ops {
+	int (*init)(void);
+	int (*cleanup)(void);
+	int (*copy)(struct ofi_mr_cache *cache, struct iovec *local,
+		    unsigned long local_cnt, struct iovec *remote,
+		    unsigned long remote_cnt, size_t total,
+		    uint64_t id, bool write);
+};
+
+int ofi_shm_p2p_init(enum ofi_shm_p2p_type p2p_type);
+int ofi_shm_p2p_cleanup(enum ofi_shm_p2p_type p2p_type);
+int ofi_shm_p2p_copy(enum ofi_shm_p2p_type p2p_type, struct ofi_mr_cache *cache,
+		     struct iovec *local, unsigned long local_cnt,
+		     struct iovec *remote, unsigned long remote_cnt, size_t total,
+		     uint64_t id, bool write);
+
+static inline int ofi_shm_p2p_init_noop(void)
+{
+	return FI_SUCCESS;
+}
+
+static inline int ofi_shm_p2p_cleanup_noop(void)
+{
+	return FI_SUCCESS;
+}
+
+static int inline
+ofi_shm_p2p_copy_noop(struct ofi_mr_cache *cache, struct iovec *local,
+		      unsigned long local_cnt, struct iovec *remote,
+		      unsigned long remote_cnt, size_t total,
+		      uint64_t id, bool write)
+{
+	return FI_SUCCESS;
+}
 
 /* SMR op_src: Specifies data source location */
 enum {

@@ -794,6 +794,7 @@
     <ClCompile Include="src\hmem_neuron.c" />
     <ClCompile Include="src\hmem_synapseai.c" />
     <ClCompile Include="src\hmem_ipc_cache.c" />
+    <ClCompile Include="src\p2p_shm.c" />
     <ClCompile Include="src\indexer.c" />
     <ClCompile Include="src\iov.c" />
     <ClCompile Include="src\ofi_str.c" />
