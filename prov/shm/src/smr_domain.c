@@ -59,6 +59,11 @@ static int smr_domain_close(fid_t fid)
 	if (domain->ipc_cache)
 		ofi_ipc_cache_destroy(domain->ipc_cache);
 
+#if HAVE_XPMEM
+	if (domain->xpmem_cache)
+		ofi_xpmem_cache_destroy(domain->xpmem_cache);
+#endif
+
 	ret = ofi_domain_close(&domain->util_domain);
 	if (ret)
 		return ret;
@@ -116,6 +121,16 @@ int smr_domain_open(struct fid_fabric *fabric, struct fi_info *info,
 		free(smr_domain);
 		return ret;
 	}
+
+#if HAVE_XPMEM
+	ret = ofi_xpmem_cache_open(&smr_domain->xpmem_cache, &smr_domain->util_domain);
+	if (ret) {
+		ofi_ipc_cache_destroy(smr_domain->ipc_cache);
+		free(smr_domain);
+		return ret;
+	}
+
+#endif
 
 	*domain = &smr_domain->util_domain.domain_fid;
 	(*domain)->fid.ops = &smr_domain_fi_ops;

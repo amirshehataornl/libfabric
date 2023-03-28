@@ -66,6 +66,11 @@ static int util_mr_find_within(struct ofi_rbmap *map, void *key, void *data)
 	if (ofi_iov_shifted_right(&info->iov, &entry->info.iov))
 		return 1;
 
+	if (info->id < entry->info.id)
+		return -1;
+	if (info->id > entry->info.id)
+		return 1;
+
 	return 0;
 }
 

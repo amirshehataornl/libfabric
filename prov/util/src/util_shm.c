@@ -43,6 +43,10 @@
 
 #include <ofi_shm.h>
 
+#if HAVE_XPMEM
+#include <ofi_xpmem.h>
+#endif
+
 struct dlist_entry ep_name_list;
 DEFINE_LIST(ep_name_list);
 pthread_mutex_t ep_list_lock = PTHREAD_MUTEX_INITIALIZER;
@@ -71,7 +75,11 @@ void smr_cma_check(struct smr_region *smr, struct smr_region *peer_smr)
 	int remote_pid;
 	int ret;
 
-	if (smr != peer_smr && peer_smr->cma_cap_peer != SMR_CMA_CAP_NA) {
+	/* TODO: There is one local region and multiple peers. How would this
+	 * handle peers which have cma enabled and others that don't. Seem
+	 * like the last peer to be examined will be the one that wins out
+	 */
+	if (smr != peer_smr && peer_smr->cma_cap_peer != SMR_VMA_CAP_NA) {
 		smr->cma_cap_peer = peer_smr->cma_cap_peer;
 		return;
 	}
@@ -86,9 +94,9 @@ void smr_cma_check(struct smr_region *smr, struct smr_region *peer_smr)
 	assert(remote_pid == peer_smr->pid);
 
 	if (smr == peer_smr) {
-		smr->cma_cap_self = (ret == -1) ? SMR_CMA_CAP_OFF : SMR_CMA_CAP_ON;
+		smr->cma_cap_self = (ret == -1) ? SMR_VMA_CAP_OFF : SMR_VMA_CAP_ON;
 	} else {
-		smr->cma_cap_peer = (ret == -1) ? SMR_CMA_CAP_OFF : SMR_CMA_CAP_ON;
+		smr->cma_cap_peer = (ret == -1) ? SMR_VMA_CAP_OFF : SMR_VMA_CAP_ON;
 		peer_smr->cma_cap_peer = smr->cma_cap_peer;
 	}
 }
@@ -283,8 +291,13 @@ int smr_create(const struct fi_provider *prov, struct smr_map *map,
 	(*smr)->flags |= SMR_FLAG_DEBUG;
 #endif
 
-	(*smr)->cma_cap_peer = SMR_CMA_CAP_NA;
-	(*smr)->cma_cap_self = SMR_CMA_CAP_NA;
+	(*smr)->cma_cap_peer = SMR_VMA_CAP_NA;
+	(*smr)->cma_cap_self = SMR_VMA_CAP_NA;
+#if HAVE_XPMEM
+	(*smr)->xpmem_cap_self = (xpmem) ? SMR_VMA_CAP_ON
+		: SMR_VMA_CAP_OFF;
+	(*smr)->xpmem_self = xpmem->pinfo;
+#endif
 	(*smr)->base_addr = *smr;
 
 	(*smr)->total_size = total_size;
@@ -307,6 +320,9 @@ int smr_create(const struct fi_provider *prov, struct smr_map *map,
 		smr_peer_addr_init(&smr_peer_data(*smr)[i].addr);
 		smr_peer_data(*smr)[i].sar_status = 0;
 		smr_peer_data(*smr)[i].name_sent = 0;
+#if HAVE_XPMEM
+		smr_peer_data(*smr)[i].xpmem.cap = SMR_VMA_CAP_NA;
+#endif
 	}
 
 	strncpy((char *) smr_name(*smr), attr->name, total_size - name_offset);
@@ -464,9 +480,30 @@ void smr_map_to_endpoint(struct smr_region *region, int64_t id)
 
 	peer_smr = smr_peer_region(region, id);
 
-	if ((region != peer_smr && region->cma_cap_peer == SMR_CMA_CAP_NA) ||
-	    (region == peer_smr && region->cma_cap_self == SMR_CMA_CAP_NA))
+	if ((region != peer_smr && region->cma_cap_peer == SMR_VMA_CAP_NA) ||
+	    (region == peer_smr && region->cma_cap_self == SMR_VMA_CAP_NA))
 		smr_cma_check(region, peer_smr);
+
+#if HAVE_XPMEM
+	/* enable xpmem locally if the peer also has it enabled */
+	if (peer_smr->xpmem_cap_self == SMR_VMA_CAP_ON &&
+	    region->xpmem_cap_self == SMR_VMA_CAP_ON) {
+		local_peers[id].xpmem.apid = xpmem_get(peer_smr->xpmem_self.seg_id,
+					XPMEM_RDWR, XPMEM_PERMIT_MODE, (void *) 0666);
+		if (local_peers[id].xpmem.apid == -1) {
+			local_peers[id].xpmem.cap = SMR_VMA_CAP_OFF;
+			return;
+		}
+		local_peers[id].xpmem.cap = SMR_VMA_CAP_ON;
+		local_peers[id].xpmem.addr_max = peer_smr->xpmem_self.address_max;
+	} else {
+		local_peers[id].xpmem.cap = SMR_VMA_CAP_OFF;
+	}
+#else
+	region->xpmem_cap_self = SMR_VMA_CAP_OFF;
+#endif
+
+	return;
 }
 
 void smr_unmap_from_endpoint(struct smr_region *region, int64_t id)
@@ -487,6 +524,10 @@ void smr_unmap_from_endpoint(struct smr_region *region, int64_t id)
 
 	peer_peers[peer_id].addr.id = -1;
 	peer_peers[peer_id].name_sent = 0;
+
+#if HAVE_XPMEM
+	xpmem_release(local_peers[peer_id].xpmem.apid);
+#endif
 }
 
 void smr_exchange_all_peers(struct smr_region *region)
