@@ -62,6 +62,15 @@ static int rxm_fabric_close(fid_t fid)
 	fi_freeinfo(rxm_fabric->offload_coll_info);
 	fi_freeinfo(rxm_fabric->util_coll_info);
 
+	if (rxm_fabric->shm_fabric) {
+		ret = fi_close(&rxm_fabric->shm_fabric->fid);
+		if (ret) {
+			FI_WARN(&rxm_prov, FI_LOG_FABRIC,
+				"Unable to close shm fabric\n");
+			return ret;
+		}
+	}
+
 	ret = fi_close(&rxm_fabric->msg_fabric->fid);
 	if (ret)
 		return ret;

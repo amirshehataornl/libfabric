@@ -205,6 +205,7 @@ extern size_t rxm_cq_eq_fairness;
 extern int rxm_passthru;
 extern int force_auto_progress;
 extern int rxm_use_write_rndv;
+extern int rxm_enable_shm;
 extern enum fi_wait_obj def_wait_obj, def_tcp_wait_obj;
 
 struct rxm_ep;
@@ -259,11 +260,14 @@ struct rxm_fabric {
 	struct fi_info *offload_coll_info;
 	struct fid_fabric *util_coll_fabric;
 	struct fid_fabric *offload_coll_fabric;
+	struct fid_fabric *shm_fabric;
+	struct fi_info *shm_info;
 };
 
 struct rxm_domain {
 	struct util_domain util_domain;
 	struct fid_domain *msg_domain;
+	struct fid_domain *shm_domain;
 	struct fid_peer_srx *srx;
 	size_t max_atomic_size;
 	size_t rx_post_size;
@@ -282,6 +286,7 @@ struct rxm_cq {
 	struct fid_peer_cq peer_cq;
 	struct fid_cq *util_coll_cq;
 	struct fid_cq *offload_coll_cq;
+	struct fid_cq *shm_cq;
 };
 
 struct rxm_eq {
@@ -293,6 +298,7 @@ struct rxm_eq {
 struct rxm_cntr {
 	struct util_cntr util_cntr;
 
+	struct fid_cntr *shm_cntr;
 	/* Used in passthru mode */
 	struct fid_cntr *msg_cntr;
 };
@@ -301,6 +307,8 @@ struct rxm_cntr {
 struct rxm_mr {
 	struct fid_mr mr_fid;
 	struct fid_mr *msg_mr;
+	struct fid_mr *shm_mr;
+	void *shm_desc;
 	struct rxm_domain *domain;
 	enum fi_hmem_iface iface;
 	uint64_t device;
@@ -640,6 +648,9 @@ struct rxm_ep {
 	struct fi_ops_transfer_peer *offload_coll_peer_xfer_ops;
 	uint64_t		offload_coll_mask;
 	struct fid_ep		*srx;
+	struct fid_ep		*shm_srx;
+
+	struct fid_ep		*shm_ep;
 
 	struct fid_cq 		*msg_cq;
 	uint64_t		msg_cq_last_poll;
@@ -872,6 +883,12 @@ rxm_send_common(struct rxm_ep *rxm_ep, struct rxm_conn *rxm_conn,
 		const struct iovec *iov, void **desc, size_t count,
 		void *context, uint64_t data, uint64_t flags, uint64_t tag,
 		uint8_t op);
+ssize_t
+rxm_send_common_shm(struct rxm_ep *rxm_ep, struct rxm_conn *rxm_conn,
+		const struct iovec *iov, void **desc, size_t count,
+		void *context, uint64_t data, uint64_t flags, uint64_t tag,
+		uint8_t op);
+//TODO do inject shm
 ssize_t
 rxm_inject_send(struct rxm_ep *rxm_ep, struct rxm_conn *rxm_conn,
 		const void *buf, size_t len);

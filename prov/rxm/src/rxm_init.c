@@ -58,6 +58,7 @@ size_t rxm_packet_size;
 int rxm_passthru = 0; /* disable by default, need to analyze performance */
 int force_auto_progress;
 int rxm_use_write_rndv;
+int rxm_enable_shm = 0;
 enum fi_wait_obj def_wait_obj = FI_WAIT_FD, def_tcp_wait_obj = FI_WAIT_UNSPEC;
 
 char *rxm_proto_state_str[] = {
@@ -680,6 +681,9 @@ RXM_INI
 			"RxM Rendezvous protocol.  If set (1), RxM will use "
 			"RMA writes rather than RMA reads during Rendezvous "
 			"transactions. (default: false/no).");
+	fi_param_define(&rxm_prov, "enable_shm", FI_PARAM_BOOL,
+			"Set this environment variable to control the  "
+			"use of internal shm offload. (default: true/yes).");
 
 	fi_param_define(&rxm_prov, "enable_direct_send", FI_PARAM_BOOL,
 			"Enable support to pass application buffers directly "
@@ -714,6 +718,7 @@ RXM_INI
 		rxm_cq_eq_fairness = 128;
 	fi_param_get_bool(&rxm_prov, "data_auto_progress", &force_auto_progress);
 	fi_param_get_bool(&rxm_prov, "use_rndv_write", &rxm_use_write_rndv);
+	fi_param_get_bool(&rxm_prov, "enable_shm", &rxm_enable_shm);
 
 	rxm_get_def_wait();
 

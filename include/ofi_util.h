@@ -210,6 +210,7 @@ struct util_domain {
 	uint64_t		info_domain_mode;
 	int			mr_mode;
 	uint32_t		addr_format;
+	void			*src_addr;
 	enum fi_av_type		av_type;
 	struct ofi_mr_map	mr_map;
 	enum fi_threading	threading;
@@ -920,6 +921,7 @@ struct util_av_attr {
 struct util_peer_addr {
 	struct rxm_av *av;
 	fi_addr_t fi_addr;
+	fi_addr_t shm_addr;
 	struct ofi_rbnode *node;
 	int index;
 	int refcnt;
@@ -945,6 +947,7 @@ void util_put_peer(struct util_peer_addr *peer);
  */
 struct rxm_av {
 	struct util_av util_av;
+	struct fid_av *shm_av;
 	struct ofi_rbmap addr_map;
 	struct ofi_bufpool *peer_pool;
 	struct ofi_bufpool *conn_pool;
@@ -965,7 +968,6 @@ size_t rxm_av_max_peers(struct rxm_av *av);
 void rxm_ref_peer(struct util_peer_addr *peer);
 void *rxm_av_alloc_conn(struct rxm_av *av);
 void rxm_av_free_conn(struct rxm_av *av, void *conn_ctx);
-
 
 typedef int (*ofi_av_apply_func)(struct util_av *av, void *addr,
 				 fi_addr_t fi_addr, void *arg);
