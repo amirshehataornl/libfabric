@@ -147,11 +147,17 @@ static int xnet_open_ep(struct fid_domain *domain_fid, struct fi_info *info,
 	return -FI_EINVAL;
 }
 
+static void xnet_foreach_ep(struct util_av *av, struct util_ep *ep)
+{
+	//noop
+}
+
 static int xnet_av_open(struct fid_domain *domain_fid, struct fi_av_attr *attr,
 			struct fid_av **fid_av, void *context)
 {
 	return rxm_util_av_open(domain_fid, attr, fid_av, context,
-				sizeof(struct xnet_conn), NULL);
+				sizeof(struct xnet_conn), NULL,
+				&xnet_foreach_ep);
 }
 
 static int

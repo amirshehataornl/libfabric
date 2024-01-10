@@ -183,9 +183,9 @@ do {									\
 extern struct fi_provider rxm_prov;
 extern struct util_prov rxm_util_prov;
 
-extern struct fi_ops_msg rxm_msg_ops;
+extern struct fi_ops_msg rxm_msg_ops, rxm_no_recv_msg_ops;
 extern struct fi_ops_msg rxm_msg_thru_ops;
-extern struct fi_ops_tagged rxm_tagged_ops;
+extern struct fi_ops_tagged rxm_tagged_ops, rxm_no_recv_tagged_ops;
 extern struct fi_ops_tagged rxm_tagged_thru_ops;
 extern struct fi_ops_rma rxm_rma_ops;
 extern struct fi_ops_rma rxm_rma_thru_ops;
@@ -264,6 +264,7 @@ struct rxm_fabric {
 struct rxm_domain {
 	struct util_domain util_domain;
 	struct fid_domain *msg_domain;
+	struct fid_peer_srx *srx;
 	size_t max_atomic_size;
 	size_t rx_post_size;
 	uint64_t mr_key;
@@ -429,18 +430,6 @@ rxm_sar_set_seg_type(struct ofi_ctrl_hdr *ctrl_hdr, enum rxm_sar_seg_type seg_ty
 	((union rxm_sar_ctrl_data *)&(ctrl_hdr->ctrl_data))->seg_type = seg_type;
 }
 
-struct rxm_recv_match_attr {
-	fi_addr_t addr;
-	uint64_t tag;
-	uint64_t ignore;
-};
-
-struct rxm_unexp_msg {
-	struct dlist_entry entry;
-	fi_addr_t addr;
-	uint64_t tag;
-};
-
 struct rxm_iov {
 	struct iovec iov[RXM_IOV_LIMIT];
 	void *desc[RXM_IOV_LIMIT];
@@ -456,6 +445,22 @@ struct rxm_buf {
 	void *desc;
 };
 
+struct rxm_proto_info {
+	/* Used for SAR protocol */
+	struct {
+		struct dlist_entry entry;//used for inserting into active list
+		struct dlist_entry pkt_list;//used to store unexpected packets
+		size_t total_recv_len;
+		struct rxm_conn *conn;
+		uint64_t msg_id;
+	} sar;
+	/* Used for Rendezvous protocol */
+	struct {
+		/* This is used to send RNDV ACK */
+		struct rxm_tx_buf *tx_buf;
+	} rndv;
+};
+
 struct rxm_rx_buf {
 	/* Must stay at top */
 	struct rxm_buf hdr;
@@ -464,9 +469,11 @@ struct rxm_rx_buf {
 	/* MSG EP / shared context to which bufs would be posted to */
 	struct fid_ep *rx_ep;
 	struct dlist_entry repost_entry;
+	struct dlist_entry unexp_entry;
 	struct rxm_conn *conn;		/* msg ep data was received on */
-	struct rxm_recv_entry *recv_entry;
-	struct rxm_unexp_msg unexp_msg;
+	/* if recv_entry is set, then we matched dyn rbuf */
+	struct fi_peer_rx_entry *peer_entry;
+	struct rxm_proto_info *proto_info;
 	uint64_t comp_flags;
 	struct fi_recv_context recv_context;
 	bool repost;
@@ -594,49 +601,6 @@ struct rxm_deferred_tx_entry {
 	};
 };
 
-struct rxm_recv_entry {
-	struct dlist_entry entry;
-	struct rxm_iov rxm_iov;
-	fi_addr_t addr;
-	void *context;
-	uint64_t flags;
-	uint64_t tag;
-	uint64_t ignore;
-	uint64_t comp_flags;
-	size_t total_len;
-	struct rxm_recv_queue *recv_queue;
-
-	/* Used for SAR protocol */
-	struct {
-		struct dlist_entry entry;
-		size_t total_recv_len;
-		struct rxm_conn *conn;
-		uint64_t msg_id;
-	} sar;
-	/* Used for Rendezvous protocol */
-	struct {
-		/* This is used to send RNDV ACK */
-		struct rxm_tx_buf *tx_buf;
-	} rndv;
-};
-OFI_DECLARE_FREESTACK(struct rxm_recv_entry, rxm_recv_fs);
-
-enum rxm_recv_queue_type {
-	RXM_RECV_QUEUE_UNSPEC,
-	RXM_RECV_QUEUE_MSG,
-	RXM_RECV_QUEUE_TAGGED,
-};
-
-struct rxm_recv_queue {
-	struct rxm_ep		*rxm_ep;
-	enum rxm_recv_queue_type type;
-	struct rxm_recv_fs	*fs;
-	struct dlist_entry	recv_list;
-	struct dlist_entry	unexp_msg_list;
-	dlist_func_t		*match_recv;
-	dlist_func_t		*match_unexp;
-};
-
 struct rxm_eager_ops {
 	void (*comp_tx)(struct rxm_ep *rxm_ep,
 			struct rxm_tx_buf *tx_eager_buf);
@@ -675,6 +639,7 @@ struct rxm_ep {
 	struct fi_ops_transfer_peer *util_coll_peer_xfer_ops;
 	struct fi_ops_transfer_peer *offload_coll_peer_xfer_ops;
 	uint64_t		offload_coll_mask;
+	struct fid_ep		*srx;
 
 	struct fid_cq 		*msg_cq;
 	uint64_t		msg_cq_last_poll;
@@ -689,7 +654,6 @@ struct rxm_ep {
 	bool			do_progress;
 	bool			enable_direct_send;
 
-	size_t			min_multi_recv_size;
 	size_t			buffered_min;
 	size_t			buffered_limit;
 	size_t			inject_limit;
@@ -701,18 +665,20 @@ struct rxm_ep {
 	struct ofi_bufpool	*rx_pool;
 	struct ofi_bufpool	*tx_pool;
 	struct ofi_bufpool	*coll_pool;
+	struct ofi_bufpool	*proto_info_pool;
 	struct rxm_pkt		*inject_pkt;
 
 	struct dlist_entry	deferred_queue;
 	struct dlist_entry	rndv_wait_list;
 
-	struct rxm_recv_queue	recv_queue;
-	struct rxm_recv_queue	trecv_queue;
-	struct ofi_bufpool	*multi_recv_pool;
-
 	struct rxm_eager_ops	*eager_ops;
 	struct rxm_rndv_ops	*rndv_ops;
 };
+
+static inline struct fid_peer_srx *rxm_get_peer_srx(struct rxm_ep *ep)
+{
+	return container_of(ep->srx, struct fid_peer_srx, ep_fid);
+}
 
 int rxm_start_listen(struct rxm_ep *ep);
 void rxm_stop_listen(struct rxm_ep *ep);
@@ -742,6 +708,10 @@ int rxm_domain_open(struct fid_fabric *fabric, struct fi_info *info,
 int rxm_cq_open(struct fid_domain *domain, struct fi_cq_attr *attr,
 			 struct fid_cq **cq_fid, void *context);
 ssize_t rxm_handle_rx_buf(struct rxm_rx_buf *rx_buf);
+ssize_t rxm_handle_unexp_sar(struct fi_peer_rx_entry *peer_entry);
+
+int rxm_srx_context(struct fid_domain *domain, struct fi_rx_attr *attr,
+		    struct fid_ep **rx_ep, void *context);
 
 int rxm_endpoint(struct fid_domain *domain, struct fi_info *info,
 			  struct fid_ep **ep, void *context);
@@ -872,44 +842,6 @@ static inline void rxm_cntr_incerr(struct util_cntr *cntr)
 		cntr->cntr_fid.ops->adderr(&cntr->cntr_fid, 1);
 }
 
-static inline void
-rxm_cq_write(struct util_cq *cq, void *context, uint64_t flags, size_t len,
-	     void *buf, uint64_t data, uint64_t tag)
-{
-	int ret;
-
-	FI_DBG(&rxm_prov, FI_LOG_CQ, "Reporting %s completion\n",
-	       fi_tostr((void *) &flags, FI_TYPE_CQ_EVENT_FLAGS));
-
-	ret = ofi_cq_write(cq, context, flags, len, buf, data, tag);
-	if (ret) {
-		FI_WARN(&rxm_prov, FI_LOG_CQ,
-			"Unable to report completion\n");
-		assert(0);
-	}
-	if (cq->wait)
-		cq->wait->signal(cq->wait);
-}
-
-static inline void
-rxm_cq_write_src(struct util_cq *cq, void *context, uint64_t flags, size_t len,
-		 void *buf, uint64_t data, uint64_t tag, fi_addr_t addr)
-{
-	int ret;
-
-	FI_DBG(&rxm_prov, FI_LOG_CQ, "Reporting %s completion\n",
-	       fi_tostr((void *) &flags, FI_TYPE_CQ_EVENT_FLAGS));
-
-	ret = ofi_cq_write_src(cq, context, flags, len, buf, data, tag, addr);
-	if (ret) {
-		FI_WARN(&rxm_prov, FI_LOG_CQ,
-			"Unable to report completion\n");
-		assert(0);
-	}
-	if (cq->wait)
-		cq->wait->signal(cq->wait);
-}
-
 ssize_t rxm_get_conn(struct rxm_ep *rxm_ep, fi_addr_t addr,
 		     struct rxm_conn **rxm_conn);
 
@@ -943,18 +875,6 @@ rxm_send_common(struct rxm_ep *rxm_ep, struct rxm_conn *rxm_conn,
 ssize_t
 rxm_inject_send(struct rxm_ep *rxm_ep, struct rxm_conn *rxm_conn,
 		const void *buf, size_t len);
-
-struct rxm_recv_entry *
-rxm_recv_entry_get(struct rxm_ep *rxm_ep, const struct iovec *iov,
-		   void **desc, size_t count, fi_addr_t src_addr,
-		   uint64_t tag, uint64_t ignore, void *context,
-		   uint64_t flags, struct rxm_recv_queue *recv_queue);
-struct rxm_rx_buf *
-rxm_get_unexp_msg(struct rxm_recv_queue *recv_queue, fi_addr_t addr,
-		  uint64_t tag, uint64_t ignore);
-ssize_t rxm_handle_unexp_sar(struct rxm_recv_queue *recv_queue,
-			     struct rxm_recv_entry *recv_entry,
-			     struct rxm_rx_buf *rx_buf);
 int rxm_post_recv(struct rxm_rx_buf *rx_buf);
 void rxm_av_remove_handler(struct util_ep *util_ep,
 			   struct util_peer_addr *peer);
@@ -976,23 +896,15 @@ rxm_free_rx_buf(struct rxm_rx_buf *rx_buf)
 }
 
 static inline void
-rxm_recv_entry_release(struct rxm_recv_entry *entry)
-{
-	if (entry->recv_queue)
-		ofi_freestack_push(entry->recv_queue->fs, entry);
-	else
-		ofi_buf_free(entry);
-}
-
-static inline void
 rxm_cq_write_recv_comp(struct rxm_rx_buf *rx_buf, void *context, uint64_t flags,
 		       size_t len, char *buf)
 {
+	flags &= ~FI_COMPLETION;
 	if (rx_buf->ep->util_coll_peer_xfer_ops &&
 	    rx_buf->pkt.hdr.tag & RXM_PEER_XFER_TAG_FLAG) {
 		struct fi_cq_tagged_entry cqe = {
 			.tag = rx_buf->pkt.hdr.tag,
-			.op_context = rx_buf->recv_entry->context,
+			.op_context = rx_buf->peer_entry->context,
 		};
 		rx_buf->ep->util_coll_peer_xfer_ops->
 			complete(rx_buf->ep->util_coll_ep, &cqe, 0);
@@ -1000,14 +912,14 @@ rxm_cq_write_recv_comp(struct rxm_rx_buf *rx_buf, void *context, uint64_t flags,
 	}
 
 	if (rx_buf->ep->rxm_info->caps & FI_SOURCE)
-		rxm_cq_write_src(rx_buf->ep->util_ep.rx_cq, context,
-				 flags, len, buf, rx_buf->pkt.hdr.data,
-				 rx_buf->pkt.hdr.tag,
-				 rx_buf->conn->peer->fi_addr);
+		(void) ofi_peer_cq_write(rx_buf->ep->util_ep.rx_cq, context,
+					 flags, len, buf, rx_buf->pkt.hdr.data,
+					 rx_buf->pkt.hdr.tag,
+					 rx_buf->conn->peer->fi_addr);
 	else
-		rxm_cq_write(rx_buf->ep->util_ep.rx_cq, context,
-			     flags, len, buf, rx_buf->pkt.hdr.data,
-			     rx_buf->pkt.hdr.tag);
+		(void) ofi_peer_cq_write(rx_buf->ep->util_ep.rx_cq, context,
+					 flags, len, buf, rx_buf->pkt.hdr.data,
+					 rx_buf->pkt.hdr.tag, FI_ADDR_NOTAVAIL);
 }
 
 struct rxm_mr *rxm_mr_get_map_entry(struct rxm_domain *domain, uint64_t key);
@@ -1017,4 +929,5 @@ rxm_multi_recv_entry_get(struct rxm_ep *rxm_ep, const struct iovec *iov,
 		   void **desc, size_t count, fi_addr_t src_addr,
 		   uint64_t tag, uint64_t ignore, void *context,
 		   uint64_t flags);
+
 #endif

@@ -33,7 +33,6 @@
 #include "ofi_util.h"
 #include "uthash.h"
 
-
 size_t rxm_av_max_peers(struct rxm_av *av)
 {
 	size_t cnt;
@@ -276,6 +275,8 @@ static int rxm_av_insert(struct fid_av *av_fid, const void *addr, size_t count,
 			 fi_addr_t *fi_addr, uint64_t flags, void *context)
 {
 	struct rxm_av *av;
+	struct dlist_entry *av_entry;
+	struct util_ep *util_ep;
 	int ret;
 
 	av = container_of(av_fid, struct rxm_av, util_av.av_fid.fid);
@@ -302,6 +303,10 @@ static int rxm_av_insert(struct fid_av *av_fid, const void *addr, size_t count,
 		return ret;
 	}
 
+	dlist_foreach(&av->util_av.ep_list, av_entry) {
+		util_ep = container_of(av_entry, struct util_ep, av_entry);
+		av->foreach_ep(&av->util_av, util_ep);
+	}
 	return av->util_av.eq ? 0 : (int) count;
 }
 
@@ -416,7 +421,8 @@ static struct fi_ops_av rxm_av_ops = {
 int rxm_util_av_open(struct fid_domain *domain_fid, struct fi_av_attr *attr,
 		     struct fid_av **fid_av, void *context, size_t conn_size,
 		     void (*remove_handler)(struct util_ep *util_ep,
-					    struct util_peer_addr *peer))
+					    struct util_peer_addr *peer),
+		     void (*foreach_ep)(struct util_av *av, struct util_ep *ep))
 {
 	struct util_domain *domain;
 	struct util_av_attr util_attr;
@@ -453,6 +459,7 @@ int rxm_util_av_open(struct fid_domain *domain_fid, struct fi_av_attr *attr,
 	av->util_av.av_fid.fid.ops = &rxm_av_fi_ops;
 	av->util_av.av_fid.ops = &rxm_av_ops;
 	av->util_av.remove_handler = remove_handler;
+	av->foreach_ep = foreach_ep;
 	*fid_av = &av->util_av.av_fid;
 	return 0;
 

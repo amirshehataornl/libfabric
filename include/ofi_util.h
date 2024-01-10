@@ -951,12 +951,16 @@ struct rxm_av {
 	struct fid_peer_av peer_av;
 	struct fid_av *util_coll_av;
 	struct fid_av *offload_coll_av;
+	void (*foreach_ep)(struct util_av *av, struct util_ep *util_ep);
+
 };
 
 int rxm_util_av_open(struct fid_domain *domain_fid, struct fi_av_attr *attr,
 		     struct fid_av **fid_av, void *context, size_t conn_size,
 		     void (*remove_handler)(struct util_ep *util_ep,
-					    struct util_peer_addr *peer));
+					    struct util_peer_addr *peer),
+		     void (*foreach_ep)(struct util_av *av,
+					struct util_ep *ep));
 size_t rxm_av_max_peers(struct rxm_av *av);
 void rxm_ref_peer(struct util_peer_addr *peer);
 void *rxm_av_alloc_conn(struct rxm_av *av);
@@ -1323,10 +1327,21 @@ static inline struct fid_peer_srx *util_get_peer_srx(struct fid_ep *rx_ep)
 	return (struct fid_peer_srx *) rx_ep->fid.context;
 }
 
+#define util_srx_desc_size(srx) sizeof(void *) * srx->iov_limit
+#define util_srx_iov_size(srx) sizeof(struct iovec) * srx->iov_limit
+
+static inline struct util_rx_entry *util_data2_entry(struct util_srx_ctx *srx,
+						     uintptr_t msg_data)
+{
+	return (struct util_rx_entry *)(msg_data - util_srx_desc_size(srx) -
+	       util_srx_iov_size(srx) - sizeof(struct util_rx_entry));
+}
+
 static inline void *util_get_msg_data(struct fi_peer_rx_entry *rx_entry)
 {
 	return container_of(rx_entry, struct util_rx_entry, peer_entry)->msg_data;
 }
+
 
 int util_ep_srx_context(struct util_domain *domain, size_t rx_size,
 			size_t iov_limit, size_t msg_data_size,
