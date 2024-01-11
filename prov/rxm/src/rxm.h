@@ -783,6 +783,17 @@ static inline size_t rxm_ep_max_atomic_size(struct fi_info *info)
 	return rxm_buffer_size - sizeof(struct rxm_atomic_hdr);
 }
 
+static inline  void
+rxm_shm_convert_desc(void **desc, void **shm_desc, size_t count) {
+	size_t i;
+	if (desc) {
+		for (i = 0; i < count; i++) {
+			shm_desc[i] = desc[i] ?
+				((struct rxm_mr *) desc[i])->shm_desc: NULL;
+		}
+	}
+}
+
 static inline ssize_t
 rxm_atomic_send_respmsg(struct rxm_ep *rxm_ep, struct rxm_conn *conn,
 			struct rxm_tx_buf *resp_buf, ssize_t len)

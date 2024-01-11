@@ -483,14 +483,8 @@ rxm_send_common_shm(struct rxm_ep *rxm_ep, struct rxm_conn *rxm_conn,
 	void *shm_desc[RXM_IOV_LIMIT]; //TODO figure out asserts/align iov limits, sizes, etc
 	struct fi_msg msg;
 	struct fi_msg_tagged tmsg;//TODO merge with msg
-	int i;
 
-	if (desc) {
-		for (i = 0; i < count; i++) {
-			shm_desc[i] = desc[i] ?
-				((struct rxm_mr *) desc[i])->shm_desc: NULL;
-		}
-	}
+	rxm_shm_convert_desc(desc, shm_desc, count);
 
 	if (op == ofi_op_msg) {
 		msg.addr = rxm_conn->peer->shm_addr;

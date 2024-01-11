@@ -1251,7 +1251,7 @@ static ssize_t rxm_handle_atomic_resp(struct rxm_ep *rxm_ep,
 		goto write_err;
 	}
 
-	if (!(tx_buf->flags & FI_INJECT))
+	if (tx_buf->flags & FI_COMPLETION)
 		rxm_cq_write_tx_comp(rxm_ep, ofi_tx_cq_flags(tx_buf->pkt.hdr.op),
 				     tx_buf->app_context, tx_buf->flags);
 
