@@ -188,12 +188,13 @@ static void rxm_add_shm_addr(struct rxm_av *av, const void *addr,
 
 static int
 rxm_av_add_peers(struct rxm_av *av, const void *addr, size_t count,
-		 fi_addr_t *fi_addr)
+		 fi_addr_t *fi_addr, fi_addr_t *user_ids)
 {
 	struct util_peer_addr *peer;
 	const void *cur_addr;
 	fi_addr_t cur_fi_addr;
 	size_t i;
+
 
 	for (i = 0; i < count; i++) {
 		cur_addr = ((char *) addr + i * av->util_av.addrlen);
@@ -201,8 +202,12 @@ rxm_av_add_peers(struct rxm_av *av, const void *addr, size_t count,
 		if (!peer)
 			goto err;
 
-		peer->fi_addr = fi_addr ? fi_addr[i] :
+		if (user_ids) {
+			peer->fi_addr = user_ids[i];
+		} else {
+			peer->fi_addr = fi_addr ? fi_addr[i] :
 				ofi_av_lookup_fi_addr(&av->util_av, cur_addr);
+		}
 		if (av->util_av.domain->src_addr)
 			rxm_add_shm_addr(av, cur_addr, peer->fi_addr,
 					 &peer->shm_addr);
@@ -304,17 +309,25 @@ static int rxm_av_insert(struct fid_av *av_fid, const void *addr, size_t count,
 	struct rxm_av *av;
 	struct dlist_entry *av_entry;
 	struct util_ep *util_ep;
+	fi_addr_t *user_ids = NULL;
 	int ret;
+
+	if (flags & FI_AV_USER_ID) {
+		assert(fi_addr);
+		user_ids = calloc(count, sizeof(*user_ids));
+		assert(user_ids);
+		memcpy(user_ids, fi_addr, sizeof(*fi_addr) * count);
+	}
 
 	av = container_of(av_fid, struct rxm_av, util_av.av_fid.fid);
 	ret = ofi_ip_av_insert(av_fid, addr, count, fi_addr, flags, context);
 	if (ret < 0)
-		return ret;
+		goto out;
 
 	if (!av->util_av.eq)
 		count = ret;
 
-	ret = rxm_av_add_peers(av, addr, count, fi_addr);
+	ret = rxm_av_add_peers(av, addr, count, fi_addr, user_ids);
 	if (ret) {
 		/* If insert was async, ofi_ip_av_insert() will have written
 		 * an event to the EQ with the number of insertions.  For
@@ -327,13 +340,18 @@ static int rxm_av_insert(struct fid_av *av_fid, const void *addr, size_t count,
 		 * to abort.
 		 */
 		rxm_av_remove(av_fid, fi_addr, count, flags);
-		return ret;
+		goto out;
 	}
 
 	dlist_foreach(&av->util_av.ep_list, av_entry) {
 		util_ep = container_of(av_entry, struct util_ep, av_entry);
 		av->foreach_ep(&av->util_av, util_ep);
 	}
+
+out:
+	free(user_ids);
+	if (ret)
+		return ret;
 	return av->util_av.eq ? 0 : (int) count;
 }
 
@@ -362,7 +380,8 @@ static int rxm_av_insertsym(struct fid_av *av_fid, const char *node,
 	if (ret > 0 && ret < count)
 		count = ret;
 
-	ret = rxm_av_add_peers(av, addr, count, fi_addr);
+	assert(!(flags & FI_AV_USER_ID));
+	ret = rxm_av_add_peers(av, addr, count, fi_addr, NULL);
 	if (ret) {
 		/* See comment in rxm_av_insert. */
 		rxm_av_remove(av_fid, fi_addr, count, flags);
