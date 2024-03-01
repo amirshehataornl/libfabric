@@ -727,8 +727,10 @@ int rxm_srx_context(struct fid_domain *domain, struct fi_rx_attr *attr,
 int rxm_endpoint(struct fid_domain *domain, struct fi_info *info,
 			  struct fid_ep **ep, void *context);
 
-void rxm_cq_write_error(struct util_cq *cq, struct util_cntr *cntr,
-			void *op_context, int err);
+void rxm_cq_write_tx_error(struct rxm_ep *ep, uint8_t op, void *op_context,
+			   int err);
+void rxm_cq_write_rx_error(struct rxm_ep *ep, uint8_t op, void *op_context,
+			   int err);
 void rxm_cq_write_error_all(struct rxm_ep *rxm_ep, int err);
 void rxm_handle_comp_error(struct rxm_ep *rxm_ep);
 ssize_t rxm_handle_comp(struct rxm_ep *rxm_ep, struct fi_cq_data_entry *comp);
