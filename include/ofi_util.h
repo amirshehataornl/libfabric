@@ -1332,19 +1332,6 @@ static inline struct fid_peer_srx *util_get_peer_srx(struct fid_ep *rx_ep)
 #define util_srx_desc_size(srx) sizeof(void *) * srx->iov_limit
 #define util_srx_iov_size(srx) sizeof(struct iovec) * srx->iov_limit
 
-static inline struct util_rx_entry *util_data2_entry(struct util_srx_ctx *srx,
-						     uintptr_t msg_data)
-{
-	return (struct util_rx_entry *)(msg_data - util_srx_desc_size(srx) -
-	       util_srx_iov_size(srx) - sizeof(struct util_rx_entry));
-}
-
-static inline void *util_get_msg_data(struct fi_peer_rx_entry *rx_entry)
-{
-	return container_of(rx_entry, struct util_rx_entry, peer_entry)->msg_data;
-}
-
-
 int util_ep_srx_context(struct util_domain *domain, size_t rx_size,
 			size_t iov_limit, size_t msg_data_size,
 			uint64_t op_flags, size_t default_min_multi_recv,

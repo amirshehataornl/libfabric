@@ -458,6 +458,7 @@ struct rxm_proto_info {
 	struct {
 		struct dlist_entry entry;//used for inserting into active list
 		struct dlist_entry pkt_list;//used to store unexpected packets
+		struct fi_peer_rx_entry *rx_entry;
 		size_t total_recv_len;
 		struct rxm_conn *conn;
 		uint64_t msg_id;
