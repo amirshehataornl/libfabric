@@ -1432,6 +1432,16 @@ static int rxm_ep_bind(struct fid *ep_fid, struct fid *bfid, uint64_t flags)
 
 	rxm_ep = container_of(ep_fid, struct rxm_ep, util_ep.ep_fid.fid);
 
+	if (bfid->fclass == FI_CLASS_SRX_CTX) {
+		srx = calloc(1, sizeof(*srx));
+		srx_b = container_of(bfid, struct fid_peer_srx, ep_fid.fid);
+		srx->peer_ops = &rxm_srx_peer_ops;
+		srx->owner_ops = srx_b->owner_ops;
+		srx->ep_fid.fid.context = srx_b->ep_fid.fid.context;
+		rxm_ep->srx = &srx->ep_fid;
+		return FI_SUCCESS;
+	}
+
         ret = ofi_ep_bind(&rxm_ep->util_ep, bfid, flags);
 	if (ret)
 		return ret;
@@ -1506,14 +1516,6 @@ static int rxm_ep_bind(struct fid *ep_fid, struct fid *bfid, uint64_t flags)
 			if (ret)
 				retv = ret;
 		}
-		break;
-	case FI_CLASS_SRX_CTX:
-		srx = calloc(1, sizeof(*srx));
-		srx_b = container_of(bfid, struct fid_peer_srx, ep_fid.fid);
-		srx->peer_ops = &rxm_srx_peer_ops;
-		srx->owner_ops = srx_b->owner_ops;
-		srx->ep_fid.fid.context = srx_b->ep_fid.fid.context;
-		rxm_ep->srx = &srx->ep_fid;
 		break;
 	}
 
