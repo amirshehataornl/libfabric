@@ -62,6 +62,30 @@ rxm_ep_rma_reg_iov(struct rxm_ep *rxm_ep, const struct iovec *msg_iov,
 }
 
 static ssize_t
+
+rxm_ep_rma_common_shm(struct rxm_conn *conn, const struct fi_msg_rma *msg,
+		  uint64_t flags, ssize_t (*rma_msg)(struct fid_ep *ep_fid,
+		  const struct fi_msg_rma *msg, uint64_t flags))
+{
+
+	void *shm_desc[RXM_IOV_LIMIT]; //TODO figure out asserts/align iov limits, sizes, etc
+	struct fi_msg_rma shm_msg = *msg;
+	int i;
+
+	if (shm_msg.desc) {
+		for (i = 0; i < shm_msg.iov_count; i++) {
+			shm_desc[i] = msg->desc[i] ?
+				((struct rxm_mr *) msg->desc[i])->shm_desc: NULL;
+		}
+		shm_msg.desc = shm_desc;
+	}
+
+	shm_msg.addr = conn->peer->shm_addr;
+
+	return rma_msg(conn->ep->shm_ep, &shm_msg, flags);
+}
+
+static ssize_t
 rxm_ep_rma_common(struct rxm_ep *rxm_ep, const struct fi_msg_rma *msg,
 		  uint64_t flags, ssize_t (*rma_msg)(struct fid_ep *ep_fid,
 		  const struct fi_msg_rma *msg, uint64_t flags),
@@ -80,6 +104,11 @@ rxm_ep_rma_common(struct rxm_ep *rxm_ep, const struct fi_msg_rma *msg,
 	ret = rxm_get_conn(rxm_ep, msg->addr, &rxm_conn);
 	if (ret)
 		goto unlock;
+
+	if (rxm_conn->peer->shm_addr != FI_ADDR_NOTAVAIL) {
+		ofi_genlock_unlock(&rxm_ep->util_ep.lock);
+		return rxm_ep_rma_common_shm(rxm_conn, msg, flags, rma_msg);
+	}
 
 	rma_buf = rxm_get_tx_buf(rxm_ep);
 	if (!rma_buf) {
@@ -285,6 +314,22 @@ rxm_ep_rma_inject_common(struct rxm_ep *rxm_ep, const struct fi_msg_rma *msg,
 	if (ret)
 		goto unlock;
 
+	if (rxm_conn->peer->shm_addr != FI_ADDR_NOTAVAIL) {
+		ofi_genlock_unlock(&rxm_ep->util_ep.lock);
+		if (flags & FI_REMOTE_CQ_DATA) {
+			return fi_inject_writedata(rxm_ep->shm_ep,
+					msg->msg_iov->iov_base,
+					msg->msg_iov->iov_len, msg->data,
+					rxm_conn->peer->shm_addr,
+					msg->rma_iov->addr, msg->rma_iov->key);
+		return fi_inject_write(rxm_ep->shm_ep,
+					msg->msg_iov->iov_base,
+					msg->msg_iov->iov_len,
+					rxm_conn->peer->shm_addr,
+					msg->rma_iov->addr, msg->rma_iov->key);
+		}
+	}
+
 	if ((total_size > rxm_ep->rxm_info->tx_attr->inject_size) ||
 	    rxm_ep->util_ep.cntrs[CNTR_WR] ||
 	    (flags & FI_COMPLETION) || (msg->iov_count > 1) ||
@@ -443,6 +488,12 @@ static ssize_t rxm_ep_inject_write(struct fid_ep *ep_fid, const void *buf,
 	if (ret)
 		goto unlock;
 
+	if (rxm_conn->peer->shm_addr != FI_ADDR_NOTAVAIL) {
+		ofi_genlock_unlock(&rxm_ep->util_ep.lock);
+		return fi_inject_write(rxm_ep->shm_ep, buf, len,
+				       rxm_conn->peer->shm_addr, addr, key);
+	}
+
 	if (len > rxm_ep->inject_limit || rxm_ep->util_ep.cntrs[CNTR_WR]) {
 		ret = rxm_ep_rma_emulate_inject(rxm_ep, rxm_conn, buf, len, 0,
 						dest_addr, addr, key,
@@ -476,6 +527,12 @@ static ssize_t rxm_ep_inject_writedata(struct fid_ep *ep_fid, const void *buf,
 	ret = rxm_get_conn(rxm_ep, dest_addr, &rxm_conn);
 	if (ret)
 		goto unlock;
+
+	if (rxm_conn->peer->shm_addr != FI_ADDR_NOTAVAIL) {
+		ofi_genlock_unlock(&rxm_ep->util_ep.lock);
+		return fi_inject_writedata(rxm_ep->shm_ep, buf, len, data,
+					   rxm_conn->peer->shm_addr, addr, key);
+	}
 
 	if (len > rxm_ep->inject_limit || rxm_ep->util_ep.cntrs[CNTR_WR]) {
 		ret = rxm_ep_rma_emulate_inject(

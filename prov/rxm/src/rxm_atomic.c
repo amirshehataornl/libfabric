@@ -196,12 +196,21 @@ rxm_ep_generic_atomic_writemsg(struct rxm_ep *rxm_ep, const struct fi_msg_atomic
 			       uint64_t flags)
 {
 	struct rxm_conn *rxm_conn;
+	struct fi_msg_atomic shm_msg;
 	ssize_t ret;
 
 	ofi_genlock_lock(&rxm_ep->util_ep.lock);
 	ret = rxm_get_conn(rxm_ep, msg->addr, &rxm_conn);
 	if (ret)
 		goto unlock;
+
+	if (rxm_conn->peer->shm_addr != FI_ADDR_NOTAVAIL) {
+		shm_msg = *msg;
+		shm_msg.addr = rxm_conn->peer->shm_addr;
+		rxm_shm_convert_desc(msg->desc, shm_msg.desc, msg->iov_count);
+		ret = fi_atomicmsg(rxm_ep->shm_ep, &shm_msg, flags);
+		goto unlock;
+	}
 
 	ret = rxm_ep_atomic_common(rxm_ep, rxm_conn, msg, NULL, NULL, 0,
 				   NULL, NULL, 0, ofi_op_atomic, flags);
@@ -271,8 +280,10 @@ rxm_ep_atomic_inject(struct fid_ep *ep_fid, const void *buf, size_t count,
 		     fi_addr_t dest_addr, uint64_t addr, uint64_t key,
 		     enum fi_datatype datatype, enum fi_op op)
 {
+	struct rxm_conn *rxm_conn;
 	struct rxm_ep *rxm_ep = container_of(ep_fid, struct rxm_ep,
 					     util_ep.ep_fid.fid);
+	ssize_t ret;
 	struct fi_ioc msg_iov = {
 		.addr = (void *) buf,
 		.count = count,
@@ -295,8 +306,26 @@ rxm_ep_atomic_inject(struct fid_ep *ep_fid, const void *buf, size_t count,
 		.data = 0,
 	};
 
+	ofi_genlock_lock(&rxm_ep->util_ep.lock);
+	ret = rxm_get_conn(rxm_ep, dest_addr, &rxm_conn);
+	if (ret)
+		goto unlock;
 
-	return rxm_ep_generic_atomic_writemsg(rxm_ep, &msg, FI_INJECT);
+	if (rxm_conn->peer->shm_addr != FI_ADDR_NOTAVAIL) {
+		ret = fi_inject_atomic(rxm_ep->shm_ep, buf, count,
+				       rxm_conn->peer->shm_addr, addr,
+				       key, datatype, op);
+		goto unlock;
+	}
+
+	// TODO: fi_inject_atomic should not generate a completion
+	//       but the normal send path with FI_INJECT should
+	ret = rxm_ep_atomic_common(rxm_ep, rxm_conn, &msg, NULL, NULL, 0,
+				   NULL, NULL, 0, ofi_op_atomic, FI_INJECT);
+unlock:
+	ofi_genlock_unlock(&rxm_ep->util_ep.lock);
+
+	return ret;
 }
 
 static ssize_t
@@ -306,12 +335,26 @@ rxm_ep_generic_atomic_readwritemsg(struct rxm_ep *rxm_ep,
 				   size_t result_count, uint64_t flags)
 {
 	struct rxm_conn *rxm_conn;
+	struct fi_msg_atomic shm_msg;
+	void **shm_res_desc;
 	ssize_t ret;
 
 	ofi_genlock_lock(&rxm_ep->util_ep.lock);
 	ret = rxm_get_conn(rxm_ep, msg->addr, &rxm_conn);
 	if (ret)
 		goto unlock;
+
+	if (rxm_conn->peer->shm_addr != FI_ADDR_NOTAVAIL) {
+		shm_msg = *msg;
+		shm_msg.addr = rxm_conn->peer->shm_addr;
+		shm_res_desc = calloc(1, sizeof(void*) * result_count);
+		rxm_shm_convert_desc(msg->desc, shm_msg.desc, msg->iov_count);
+		rxm_shm_convert_desc(result_desc, shm_res_desc, result_count);
+		ret = fi_fetch_atomicmsg(rxm_ep->shm_ep, &shm_msg, resultv,
+					 shm_res_desc, result_count, flags);
+		free(shm_res_desc);
+		goto unlock;
+	}
 
 	ret = rxm_ep_atomic_common(rxm_ep, rxm_conn, msg, NULL, NULL, 0,
 				   resultv, result_desc, result_count,
@@ -399,12 +442,31 @@ rxm_ep_generic_atomic_compwritemsg(struct rxm_ep *rxm_ep,
 				   uint64_t flags)
 {
 	struct rxm_conn *rxm_conn;
+	struct fi_msg_atomic shm_msg;
+	void **shm_comp_desc;
+	void **shm_res_desc;
 	ssize_t ret;
 
 	ofi_genlock_lock(&rxm_ep->util_ep.lock);
 	ret = rxm_get_conn(rxm_ep, msg->addr, &rxm_conn);
 	if (ret)
 		goto unlock;
+
+	if (rxm_conn->peer->shm_addr != FI_ADDR_NOTAVAIL) {
+		shm_msg = *msg;
+		shm_msg.addr = rxm_conn->peer->shm_addr;
+		shm_comp_desc = calloc(1, sizeof(void*) * compare_count);
+		shm_res_desc = calloc(1, sizeof(void*) * result_count);
+		rxm_shm_convert_desc(msg->desc, shm_msg.desc, msg->iov_count);
+		rxm_shm_convert_desc(compare_desc, shm_comp_desc, compare_count);
+		rxm_shm_convert_desc(result_desc, shm_res_desc, result_count);
+		ret = fi_compare_atomicmsg(rxm_ep->shm_ep, msg, comparev,
+					   shm_comp_desc, compare_count, resultv,
+					   shm_res_desc, result_count, flags);
+		free(shm_comp_desc);
+		free(shm_res_desc);
+		goto unlock;
+	}
 
 	ret = rxm_ep_atomic_common(rxm_ep, rxm_conn, msg, comparev,
 				   compare_desc, compare_count, resultv,
@@ -497,6 +559,7 @@ int rxm_ep_query_atomic(struct fid_domain *domain, enum fi_datatype datatype,
 			enum fi_op op, struct fi_atomic_attr *attr,
 			uint64_t flags)
 {
+	struct fi_atomic_attr shm_atomic_attr;
 	struct rxm_domain *rxm_domain = container_of(domain,
 						     struct rxm_domain,
 						     util_domain.domain_fid);
@@ -527,6 +590,17 @@ int rxm_ep_query_atomic(struct fid_domain *domain, enum fi_datatype datatype,
 		return -FI_EOPNOTSUPP;
 
 	attr->count = tot_size / attr->size;
+
+	if (rxm_domain->shm_domain) {
+		ret = fi_query_atomic(rxm_domain->shm_domain, datatype, op,
+				      &shm_atomic_attr, flags);
+		if (ret)
+			return ret;
+
+		if (shm_atomic_attr.count < attr->count)
+			attr->count = shm_atomic_attr.count;
+	}
+
 	if (attr->count == 0)
 		return -FI_EOPNOTSUPP;
 

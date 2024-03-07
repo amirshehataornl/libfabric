@@ -545,7 +545,8 @@ static int sm2_ep_ctrl(struct fid *fid, int command, void *arg)
 					      struct sm2_domain,
 					      util_domain.domain_fid);
 			ret = util_ep_srx_context(&domain->util_domain,
-						  ep->rx_size, SM2_IOV_LIMIT,
+						  ep->rx_size, SM2_IOV_LIMIT, 0,
+						  ep->util_ep.rx_op_flags,
 						  SM2_INJECT_SIZE, &sm2_update,
 						  &ep->util_ep.lock, &ep->srx);
 			if (ret)

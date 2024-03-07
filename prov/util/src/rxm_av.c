@@ -33,7 +33,6 @@
 #include "ofi_util.h"
 #include "uthash.h"
 
-
 size_t rxm_av_max_peers(struct rxm_av *av)
 {
 	size_t cnt;
@@ -79,6 +78,7 @@ rxm_alloc_peer(struct rxm_av *av, const void *addr)
 	peer->av = av;
 	peer->index = (int) ofi_buf_index(peer);
 	peer->fi_addr = FI_ADDR_NOTAVAIL;
+	peer->shm_addr = FI_ADDR_NOTAVAIL;
 	peer->refcnt = 1;
 	memcpy(&peer->addr, addr, av->util_av.addrlen);
 
@@ -163,14 +163,38 @@ rxm_put_peer_addr(struct rxm_av *av, fi_addr_t fi_addr)
 	rxm_set_av_context(av, fi_addr, NULL);
 }
 
+static void rxm_add_shm_addr(struct rxm_av *av, const void *addr,
+			     fi_addr_t rxm_addr, fi_addr_t *fi_addr)
+{
+	struct util_domain *domain;
+	char shm_name[OFI_ADDRSTRLEN];//change others to this
+	size_t shm_name_len = OFI_ADDRSTRLEN;
+	int ret;
+
+	domain = av->util_av.domain;
+
+	if (!ofi_equals_ipaddr((struct sockaddr *) addr,
+		(struct sockaddr *) domain->src_addr))
+		return;
+
+	ofi_straddr(shm_name, &shm_name_len, domain->addr_format,
+		    (void *) addr);
+	*fi_addr = rxm_addr;
+	ret = fi_av_insert(av->shm_av, shm_name, 1, fi_addr, FI_AV_USER_ID, NULL);
+	if (ret != 1) {
+		//warn
+	}
+}
+
 static int
 rxm_av_add_peers(struct rxm_av *av, const void *addr, size_t count,
-		 fi_addr_t *fi_addr)
+		 fi_addr_t *fi_addr, fi_addr_t *user_ids)
 {
 	struct util_peer_addr *peer;
 	const void *cur_addr;
 	fi_addr_t cur_fi_addr;
 	size_t i;
+
 
 	for (i = 0; i < count; i++) {
 		cur_addr = ((char *) addr + i * av->util_av.addrlen);
@@ -178,8 +202,15 @@ rxm_av_add_peers(struct rxm_av *av, const void *addr, size_t count,
 		if (!peer)
 			goto err;
 
-		peer->fi_addr = fi_addr ? fi_addr[i] :
+		if (user_ids) {
+			peer->fi_addr = user_ids[i];
+		} else {
+			peer->fi_addr = fi_addr ? fi_addr[i] :
 				ofi_av_lookup_fi_addr(&av->util_av, cur_addr);
+		}
+		if (av->util_av.domain->src_addr)
+			rxm_add_shm_addr(av, cur_addr, peer->fi_addr,
+					 &peer->shm_addr);
 
 		/* lookup can fail if prior AV insertion failed */
 		if (peer->fi_addr != FI_ADDR_NOTAVAIL)
@@ -276,17 +307,27 @@ static int rxm_av_insert(struct fid_av *av_fid, const void *addr, size_t count,
 			 fi_addr_t *fi_addr, uint64_t flags, void *context)
 {
 	struct rxm_av *av;
+	struct dlist_entry *av_entry;
+	struct util_ep *util_ep;
+	fi_addr_t *user_ids = NULL;
 	int ret;
+
+	if (flags & FI_AV_USER_ID) {
+		assert(fi_addr);
+		user_ids = calloc(count, sizeof(*user_ids));
+		assert(user_ids);
+		memcpy(user_ids, fi_addr, sizeof(*fi_addr) * count);
+	}
 
 	av = container_of(av_fid, struct rxm_av, util_av.av_fid.fid);
 	ret = ofi_ip_av_insert(av_fid, addr, count, fi_addr, flags, context);
 	if (ret < 0)
-		return ret;
+		goto out;
 
 	if (!av->util_av.eq)
 		count = ret;
 
-	ret = rxm_av_add_peers(av, addr, count, fi_addr);
+	ret = rxm_av_add_peers(av, addr, count, fi_addr, user_ids);
 	if (ret) {
 		/* If insert was async, ofi_ip_av_insert() will have written
 		 * an event to the EQ with the number of insertions.  For
@@ -299,9 +340,18 @@ static int rxm_av_insert(struct fid_av *av_fid, const void *addr, size_t count,
 		 * to abort.
 		 */
 		rxm_av_remove(av_fid, fi_addr, count, flags);
-		return ret;
+		goto out;
 	}
 
+	dlist_foreach(&av->util_av.ep_list, av_entry) {
+		util_ep = container_of(av_entry, struct util_ep, av_entry);
+		av->foreach_ep(&av->util_av, util_ep);
+	}
+
+out:
+	free(user_ids);
+	if (ret)
+		return ret;
 	return av->util_av.eq ? 0 : (int) count;
 }
 
@@ -330,7 +380,8 @@ static int rxm_av_insertsym(struct fid_av *av_fid, const char *node,
 	if (ret > 0 && ret < count)
 		count = ret;
 
-	ret = rxm_av_add_peers(av, addr, count, fi_addr);
+	assert(!(flags & FI_AV_USER_ID));
+	ret = rxm_av_add_peers(av, addr, count, fi_addr, NULL);
 	if (ret) {
 		/* See comment in rxm_av_insert. */
 		rxm_av_remove(av_fid, fi_addr, count, flags);
@@ -383,9 +434,13 @@ static int rxm_av_close(struct fid *av_fid)
 	if (av->offload_coll_av)
 		fi_close((fid_t) av->offload_coll_av);
 
+	if (av->shm_av)
+		ret = fi_close(&av->shm_av->fid);
+
 	ret = ofi_av_close(&av->util_av);
 	if (ret)
 		return ret;
+
 
 	ofi_rbmap_cleanup(&av->addr_map);
 	ofi_bufpool_destroy(av->conn_pool);
@@ -416,7 +471,8 @@ static struct fi_ops_av rxm_av_ops = {
 int rxm_util_av_open(struct fid_domain *domain_fid, struct fi_av_attr *attr,
 		     struct fid_av **fid_av, void *context, size_t conn_size,
 		     void (*remove_handler)(struct util_ep *util_ep,
-					    struct util_peer_addr *peer))
+					    struct util_peer_addr *peer),
+		     void (*foreach_ep)(struct util_av *av, struct util_ep *ep))
 {
 	struct util_domain *domain;
 	struct util_av_attr util_attr;
@@ -453,6 +509,7 @@ int rxm_util_av_open(struct fid_domain *domain_fid, struct fi_av_attr *attr,
 	av->util_av.av_fid.fid.ops = &rxm_av_fi_ops;
 	av->util_av.av_fid.ops = &rxm_av_ops;
 	av->util_av.remove_handler = remove_handler;
+	av->foreach_ep = foreach_ep;
 	*fid_av = &av->util_av.av_fid;
 	return 0;
 

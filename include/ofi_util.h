@@ -210,6 +210,7 @@ struct util_domain {
 	uint64_t		info_domain_mode;
 	int			mr_mode;
 	uint32_t		addr_format;
+	void			*src_addr;
 	enum fi_av_type		av_type;
 	struct ofi_mr_map	mr_map;
 	enum fi_threading	threading;
@@ -920,6 +921,7 @@ struct util_av_attr {
 struct util_peer_addr {
 	struct rxm_av *av;
 	fi_addr_t fi_addr;
+	fi_addr_t shm_addr;
 	struct ofi_rbnode *node;
 	int index;
 	int refcnt;
@@ -945,23 +947,27 @@ void util_put_peer(struct util_peer_addr *peer);
  */
 struct rxm_av {
 	struct util_av util_av;
+	struct fid_av *shm_av;
 	struct ofi_rbmap addr_map;
 	struct ofi_bufpool *peer_pool;
 	struct ofi_bufpool *conn_pool;
 	struct fid_peer_av peer_av;
 	struct fid_av *util_coll_av;
 	struct fid_av *offload_coll_av;
+	void (*foreach_ep)(struct util_av *av, struct util_ep *util_ep);
+
 };
 
 int rxm_util_av_open(struct fid_domain *domain_fid, struct fi_av_attr *attr,
 		     struct fid_av **fid_av, void *context, size_t conn_size,
 		     void (*remove_handler)(struct util_ep *util_ep,
-					    struct util_peer_addr *peer));
+					    struct util_peer_addr *peer),
+		     void (*foreach_ep)(struct util_av *av,
+					struct util_ep *ep));
 size_t rxm_av_max_peers(struct rxm_av *av);
 void rxm_ref_peer(struct util_peer_addr *peer);
 void *rxm_av_alloc_conn(struct rxm_av *av);
 void rxm_av_free_conn(struct rxm_av *av, void *conn_ctx);
-
 
 typedef int (*ofi_av_apply_func)(struct util_av *av, void *addr,
 				 fi_addr_t fi_addr, void *arg);
@@ -1262,11 +1268,13 @@ struct util_rx_entry {
 	uint64_t		seq_no;
 	uint64_t		ignore;
 	int			multi_recv_ref;
-	/* extra memory allocated at the end of each entry to hold iovecs and
-	 * MR descriptors. The amount of memory is determined by the provider's
-	 * iov limit.
+	char			*msg_data;
+	/* extra memory allocated at the end of each entry to hold iovecs,
+	 * MR descriptors, and optional message data. The amount of memory is
+	 * determined by the provider's iov limit and msg data size.
 	 * struct iovec iov[]
 	 * void *desc[]
+	 * char msg_data[]
 	 */
 };
 
@@ -1289,6 +1297,7 @@ struct util_srx_ctx {
 	uint64_t		rx_op_flags;
 	uint64_t		rx_msg_flags;
 	size_t			iov_limit;
+	size_t			msg_data_size;
 	ofi_update_func_t	update_func;
 
 	struct util_cq		*cq;
@@ -1320,10 +1329,14 @@ static inline struct fid_peer_srx *util_get_peer_srx(struct fid_ep *rx_ep)
 	return (struct fid_peer_srx *) rx_ep->fid.context;
 }
 
+#define util_srx_desc_size(srx) sizeof(void *) * srx->iov_limit
+#define util_srx_iov_size(srx) sizeof(struct iovec) * srx->iov_limit
+
 int util_ep_srx_context(struct util_domain *domain, size_t rx_size,
-			size_t iov_limit, size_t default_min_mr,
-			ofi_update_func_t update_func,
-			struct ofi_genlock *lock, struct fid_ep **rx_ep);
+			size_t iov_limit, size_t msg_data_size,
+			uint64_t op_flags, size_t default_min_multi_recv,
+			ofi_update_func_t update_func, struct ofi_genlock *lock,
+			struct fid_ep **rx_ep);
 int util_srx_close(struct fid *fid);
 int util_srx_bind(struct fid *fid, struct fid *bfid, uint64_t flags);
 ssize_t util_srx_generic_recv(struct fid_ep *ep_fid, const struct iovec *iov,

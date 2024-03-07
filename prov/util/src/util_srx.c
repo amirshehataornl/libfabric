@@ -50,7 +50,14 @@ static inline void **util_srx_desc(struct util_srx_ctx *srx,
 				   struct util_rx_entry *rx_entry)
 {
 	return (void **) ((char *) util_srx_iov(rx_entry) +
-			(sizeof(struct iovec) * srx->iov_limit));
+			(util_srx_iov_size(srx)));
+}
+
+static inline char *util_srx_data(struct util_srx_ctx *srx,
+				   struct util_rx_entry *rx_entry)
+{
+	return (char *) ((char *) util_srx_desc(srx, rx_entry) +
+			(util_srx_desc_size(srx)));
 }
 
 static void util_init_rx_entry(struct util_rx_entry *entry,
@@ -64,6 +71,7 @@ static void util_init_rx_entry(struct util_rx_entry *entry,
 	else
 		memset(entry->peer_entry.desc, 0, sizeof(*desc) * count);
 
+	entry->peer_entry.size = ofi_total_iov_len(iov, count);
 	entry->peer_entry.count = count;
 	entry->peer_entry.addr = addr;
 	entry->peer_entry.context = context;
@@ -108,6 +116,9 @@ static struct util_rx_entry *util_init_unexp(struct util_srx_ctx *srx,
 	util_entry->peer_entry.addr = addr;
 	util_entry->peer_entry.tag = tag;
 	util_entry->peer_entry.flags = flags;
+	util_entry->peer_entry.iov[0].iov_base = util_entry->msg_data;
+	util_entry->peer_entry.iov[0].iov_len = srx->msg_data_size;
+	util_entry->peer_entry.count = 1;
 
 	return util_entry;
 }
@@ -188,8 +199,8 @@ static int util_match_msg(struct fid_peer_srx *srx, fi_addr_t addr, size_t size,
 			(void) slist_remove_head(&srx_ctx->msg_queue);
 		}
 		util_entry->peer_entry.srx = srx;
-		srx_ctx->update_func(srx_ctx, util_entry);
 	}
+	srx_ctx->update_func(srx_ctx, util_entry);
 	*rx_entry = &util_entry->peer_entry;
 	return ret;
 }
@@ -253,7 +264,6 @@ static int util_match_tag(struct fid_peer_srx *srx, fi_addr_t addr,
 		if (ofi_match_tag(util_entry->peer_entry.tag,
 				  util_entry->ignore, tag)) {
 			util_entry->peer_entry.srx = srx;
-			srx_ctx->update_func(srx_ctx, util_entry);
 			slist_remove(&srx_ctx->tag_queue, item, prev);
 			goto out;
 		}
@@ -265,6 +275,7 @@ static int util_match_tag(struct fid_peer_srx *srx, fi_addr_t addr,
 	ret = -FI_ENOENT;
 	util_entry->peer_entry.srx = srx;
 out:
+	srx_ctx->update_func(srx_ctx, util_entry);
 	*rx_entry = &util_entry->peer_entry;
 	return ret;
 }
@@ -506,7 +517,7 @@ static ssize_t util_generic_mrecv(struct util_srx_ctx *srx,
 
 	ofi_genlock_lock(srx->lock);
 	mrecv_entry = util_get_recv_entry(srx, iov, desc, iov_count, addr,
-					  context, 0, 0, flags);
+					  context, 0, 0, flags | FI_MSG | FI_RECV);
 	if (!mrecv_entry) {
 		ret = -FI_ENOMEM;
 		goto out;
@@ -518,7 +529,7 @@ static ssize_t util_generic_mrecv(struct util_srx_ctx *srx,
 	while (rx_entry) {
 		util_init_rx_entry(rx_entry, mrecv_entry->peer_entry.iov, desc,
 				   iov_count, addr, context, 0,
-				   flags & (~FI_MULTI_RECV));
+				   (flags | FI_MSG | FI_RECV) & (~FI_MULTI_RECV));
 		mrecv_entry->multi_recv_ref++;
 		rx_entry->peer_entry.owner_context = mrecv_entry;
 
@@ -691,7 +702,7 @@ ssize_t util_srx_generic_trecv(struct fid_ep *ep_fid, const struct iovec *iov,
 			assert(queue);
 			rx_entry = util_get_recv_entry(srx, iov, desc,
 						iov_count, addr, context, tag,
-						ignore, flags);
+						ignore, flags | FI_TAGGED | FI_RECV);
 			if (!rx_entry)
 				ret = -FI_ENOMEM;
 			else
@@ -737,17 +748,17 @@ ssize_t util_srx_generic_recv(struct fid_ep *ep_fid, const struct iovec *iov,
 			ofi_array_at(&srx->src_recv_queues, addr);
 		assert(queue);
 		rx_entry = util_get_recv_entry(srx, iov, desc, iov_count, addr,
-					       context, 0, 0, flags);
+					       context, 0, 0, flags | FI_MSG | FI_RECV);
 		if (!rx_entry)
 			ret = -FI_ENOMEM;
-		else 
+		else
 			slist_insert_tail((struct slist_entry *)
 					  (&rx_entry->peer_entry), queue);
 		goto out;
 	}
 
 	util_init_rx_entry(rx_entry, iov, desc, iov_count, addr, context, 0,
-			   flags);
+			   flags | FI_MSG | FI_RECV);
 
 	srx->update_func(srx, rx_entry);
 	ret = rx_entry->peer_entry.srx->peer_ops->start_msg(
@@ -1107,6 +1118,7 @@ static void util_rx_entry_init(struct ofi_bufpool_region *region, void *buf)
 
 	rx_entry->peer_entry.iov = util_srx_iov(rx_entry);
 	rx_entry->peer_entry.desc = util_srx_desc(srx, rx_entry);
+	rx_entry->msg_data = util_srx_data(srx, rx_entry);
 }
 
 static void util_srx_init_slist(struct ofi_dyn_arr *arr, void *item)
@@ -1124,9 +1136,10 @@ static void util_srx_init_unexp_peer(struct ofi_dyn_arr *arr, void *item)
 }
 
 int util_ep_srx_context(struct util_domain *domain, size_t rx_size,
-			size_t iov_limit, size_t default_min_multi_recv,
-			ofi_update_func_t update_func,
-			struct ofi_genlock *lock, struct fid_ep **rx_ep)
+			size_t iov_limit, size_t msg_data_size,
+			uint64_t op_flags, size_t default_min_multi_recv,
+			ofi_update_func_t update_func, struct ofi_genlock *lock,
+			struct fid_ep **rx_ep)
 {
 	struct util_srx_ctx *srx;
 	struct ofi_bufpool_attr pool_attr = {0};
@@ -1152,7 +1165,7 @@ int util_ep_srx_context(struct util_domain *domain, size_t rx_size,
 
 	//each entry has the iovs and descriptors stored at the end of the entry
 	//calculate how much space each entry needs based on provider iov limits
-	pool_attr.size = sizeof(struct util_rx_entry) +
+	pool_attr.size = sizeof(struct util_rx_entry) + msg_data_size +
 		(sizeof(struct iovec) + sizeof(void *)) * iov_limit;
 	pool_attr.alignment = 16;
 	pool_attr.chunk_cnt = rx_size,
@@ -1171,6 +1184,7 @@ int util_ep_srx_context(struct util_domain *domain, size_t rx_size,
 	srx->dir_recv = domain->info_domain_caps & FI_DIRECTED_RECV;
 	srx->update_func = update_func;
 	srx->lock = lock;
+	srx->rx_op_flags = op_flags;
 
 	srx->peer_srx.owner_ops = &util_srx_owner_ops;
 	srx->peer_srx.peer_ops = NULL;

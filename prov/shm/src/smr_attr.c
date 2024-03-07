@@ -112,7 +112,7 @@ struct fi_domain_attr smr_domain_attr = {
 	.max_ep_tx_ctx = 1,
 	.max_ep_rx_ctx = 1,
 	.mr_iov_limit = SMR_IOV_LIMIT,
-	.caps = FI_LOCAL_COMM,
+	.caps = FI_LOCAL_COMM | FI_AV_USER_ID,
 };
 
 struct fi_domain_attr smr_hmem_domain_attr = {
@@ -132,7 +132,7 @@ struct fi_domain_attr smr_hmem_domain_attr = {
 	.max_ep_tx_ctx = 1,
 	.max_ep_rx_ctx = 1,
 	.mr_iov_limit = SMR_IOV_LIMIT,
-	.caps = FI_LOCAL_COMM,
+	.caps = FI_LOCAL_COMM | FI_AV_USER_ID,
 };
 
 struct fi_fabric_attr smr_fabric_attr = {
@@ -151,7 +151,8 @@ struct fi_info smr_hmem_info = {
 };
 
 struct fi_info smr_info = {
-	.caps = SMR_TX_CAPS | SMR_RX_CAPS | FI_MULTI_RECV | FI_LOCAL_COMM,
+	.caps = SMR_TX_CAPS | SMR_RX_CAPS | FI_MULTI_RECV | FI_LOCAL_COMM |
+		FI_PEER,
 	.addr_format = FI_ADDR_STR,
 	.tx_attr = &smr_tx_attr,
 	.rx_attr = &smr_rx_attr,
