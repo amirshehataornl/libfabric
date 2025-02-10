@@ -1,0 +1,311 @@
+%include <typemaps.i>
+/*
+%typemap(out) ssize_t {
+	$result = PyLong_FromLong((long)$1);
+}
+*/
+%define GENERATE_ARGIN_TYPEMAP(TYPE)
+%typemap(in, numinputs=0) TYPE* (TYPE temp) {
+	temp = NULL;
+	$1 = &temp;
+}
+%enddef
+
+%define GENERATE_ARGOUT_TYPEMAP(TYPE)
+%typemap(argout) TYPE* {
+	PyObject *o, *o2, *o3;
+	/* when creating a pointer, make sure not to use
+	 * SWIG_POINTER_OWN. These pointers are managed by libfabric and don't
+	 * need to be freed by SWIG */
+	o = SWIG_NewPointerObj(SWIG_as_voidptr(*$1), $*1_descriptor, 0);
+	if ((!$result) || ($result == Py_None))
+		$result = o;
+	else
+	{
+		if(!PyTuple_Check($result))
+		{
+			o2 = $result;
+			$result = PyTuple_New(1);
+			PyTuple_SetItem($result, 0, o2);
+		}
+		o3 = PyTuple_New(1);
+		PyTuple_SetItem(o3, 0, o);
+		o2 = $result;
+		$result = PySequence_Concat(o2, o3);
+		Py_DECREF(o2);
+		Py_DECREF(o3);
+	}
+}
+%enddef
+
+%inline %{
+	struct fi_req_context {
+		size_t pid;
+		size_t req_id;
+	};
+
+	struct fi_req_context *get_req_context(void *req) {
+		return (struct fi_req_context *) req;
+	}
+	struct fid* get_fab_fid(struct fid_fabric *fab) {
+		return &fab->fid;
+	}
+	struct fid* get_dom_fid(struct fid_domain *dom) {
+		return &dom->fid;
+	}
+	struct fid* get_ep_fid(struct fid_ep *ep) {
+		return &ep->fid;
+	}
+	struct fid* get_cq_fid(struct fid_cq *cq) {
+		return &cq->fid;
+	}
+	struct fid* get_av_fid(struct fid_av *av) {
+		return &av->fid;
+	}
+
+	void fi_info_init(struct fi_info *info, struct fi_fabric_attr *fab,
+		struct fi_domain_attr *dom, struct fi_rx_attr *rx,
+		struct fi_tx_attr *tx, struct fi_ep_attr *ep) {
+		info->fabric_attr = fab;
+		info->domain_attr = dom;
+		info->tx_attr = tx;
+		info->rx_attr = rx;
+		info->ep_attr = ep;
+	}
+
+	#define SWIG_SIZEOF(struct_name) int sizeof_##struct_name() \
+			{ return sizeof(struct struct_name); }
+
+	SWIG_SIZEOF(fi_cq_tagged_entry)
+%}
+
+/* Now specify which types should use these typemaps */
+GENERATE_ARGIN_TYPEMAP(struct fid_fabric*)
+GENERATE_ARGIN_TYPEMAP(struct fid_domain*)
+GENERATE_ARGIN_TYPEMAP(struct fid_cq*)
+GENERATE_ARGIN_TYPEMAP(struct fid_av*)
+GENERATE_ARGIN_TYPEMAP(struct fid_ep*)
+GENERATE_ARGIN_TYPEMAP(struct fi_info*)
+
+GENERATE_ARGOUT_TYPEMAP(struct fid_fabric*)
+GENERATE_ARGOUT_TYPEMAP(struct fid_domain*)
+GENERATE_ARGOUT_TYPEMAP(struct fid_cq*)
+GENERATE_ARGOUT_TYPEMAP(struct fid_av*)
+GENERATE_ARGOUT_TYPEMAP(struct fid_ep*)
+GENERATE_ARGOUT_TYPEMAP(struct fi_info*)
+
+/* Typemap for input: Track the original buffer length
+ * handles functions:
+ *    fi_av_lookup()
+ *    fi_getname()
+ *    fi_getpeer()
+ *
+ */
+%typemap(in) (void *addr, size_t *addrlen) (size_t _global_orig_size) {
+	Py_buffer py_buf;
+	if (PyObject_GetBuffer($input, &py_buf, PyBUF_WRITABLE) < 0) {
+		SWIG_exception_fail(SWIG_TypeError, "Expected a writable buffer for addr");
+	}
+
+	_global_orig_size = py_buf.len;
+
+	$1 = py_buf.buf;
+	$2 = (size_t *)&py_buf.len;
+}
+
+%typemap(argout) (void *addr, size_t *addrlen) {
+	PyObject *py_buffer;
+
+	if (*$2 <= _global_orig_size) {
+		py_buffer = PyByteArray_FromStringAndSize((char *)$1, *$2);
+	} else {
+		py_buffer = Py_None;
+		Py_INCREF(Py_None);
+	}
+
+	PyObject *tuple = Py_BuildValue("(OOn)", resultobj, py_buffer, *$2);
+
+	Py_XDECREF(resultobj);
+	resultobj = tuple;
+}
+
+/* handles functions:
+ *    fi_av_insert()
+ *    fi_av_straddr()
+ *    fi_connect()
+ *    fi_join()
+ *
+ */
+%typemap(in) (const void *addr) {
+	Py_buffer py_buf;
+	if (PyObject_GetBuffer($input, &py_buf, PyBUF_WRITABLE) < 0) {
+		SWIG_exception_fail(SWIG_TypeError, "Expected a writable buffer for addr");
+	}
+	$1 = py_buf.buf;
+}
+
+/* handles functions:
+ *    fi_av_insert()
+ *
+ */
+%typemap(in) (size_t count, fi_addr_t *fi_addr) {
+	PyObject *seq = PySequence_Fast($input, "Expected a sequence for fi_addr");
+	if (!seq)
+		SWIG_exception_fail(SWIG_TypeError, "Expected a list or array for fi_addr");
+
+	Py_ssize_t size = PySequence_Fast_GET_SIZE(seq);
+
+	$2 = (fi_addr_t *) calloc(sizeof(fi_addr_t), size);
+	if (!$2) {
+		Py_DECREF(seq);
+		SWIG_exception_fail(SWIG_RuntimeError, "Memory allocation failed for fi_addr");
+	}
+
+	for (Py_ssize_t i = 0; i < size; i++) {
+		PyObject *item = PySequence_Fast_GET_ITEM(seq, i);
+		$2[i] = (fi_addr_t) PyLong_AsUnsignedLong(item);
+		if (PyErr_Occurred()) {
+			free($2);
+			Py_DECREF(seq);
+			SWIG_exception_fail(SWIG_TypeError, "Expected an integer address in fi_addr");
+		}
+	}
+
+	$1 = (size_t) size;
+
+	Py_DECREF(seq);
+}
+
+%typemap(argout) (size_t count, fi_addr_t *fi_addr) {
+	PyObject *addr_list = PyList_New((Py_ssize_t) $1);
+	if (!addr_list) {
+		free($2);
+		SWIG_exception_fail(SWIG_RuntimeError, "Failed to create Python list for fi_addr");
+	}
+
+	for (Py_ssize_t i = 0; i < (Py_ssize_t) $1; i++) {
+		PyObject *item = PyLong_FromUnsignedLong((unsigned long) $2[i]);
+		if (!item) {
+			Py_DECREF(addr_list);
+			free($2);
+			SWIG_exception_fail(SWIG_RuntimeError, "Failed to convert fi_addr entry to Python int");
+		}
+		PyList_SET_ITEM(addr_list, i, item);
+	}
+
+	free($2);
+
+	PyObject *tuple = Py_BuildValue("(OO)", $result, addr_list);
+
+	Py_XDECREF($result);
+	$result = tuple;
+}
+
+/* handles functions:
+ *    fi_broadcast() - don't think this should be covered by this typemap
+ *    fi_cq_sread()
+ *    fi_cq_read()
+ *    fi_cq_readfrom()
+ *    fi_cq_sreadfrom()
+ */
+%typemap(in) (void *buf, size_t count) {
+	Py_buffer py_buf;
+	if (PyObject_GetBuffer($input, &py_buf, PyBUF_WRITABLE) < 0) {
+		SWIG_exception_fail(SWIG_TypeError, "Expected a writable buffer");
+	}
+	$1 = py_buf.buf;
+	$2 = py_buf.len / sizeof(struct fi_cq_tagged_entry);
+}
+
+/* handles functions:
+ *    fi_recv()
+ *    fi_read()
+ *    fi_trecv()
+ *    fi_eq_read()
+ *    fi_eq_write()
+ *    fi_eq_sread()
+ *    fi_mr_reg()
+ *    fi_send()
+ *    fi_inject()
+ *    fi_senddata()
+ *    fi_injectdata()
+ *    fi_write()
+ *    fi_inject_write()
+ *    fi_writedata()
+ *    fi_inject_writedata()
+ *    fi_tsend()
+ *    fi_tinject()
+ *    fi_tsendata()
+ *    fi_tinjectdata()
+ */
+%typemap(in) (void *buf, size_t len) {
+	Py_buffer py_buf;
+	if (PyObject_GetBuffer($input, &py_buf, PyBUF_WRITABLE) < 0) {
+		SWIG_exception_fail(SWIG_TypeError, "Expected a writable buffer");
+	}
+	$1 = py_buf.buf;
+	$2 = py_buf.len;
+}
+
+/* Apply the above typemap(in) to both sets of patterns */
+%apply (void *buf, size_t len) {(void *buf, size_t len), (const void *buf, size_t len)};
+
+%typemap(argout) (void *buf, size_t count) {
+	ssize_t rc = PyLong_AsLongLong($result);
+
+	if (rc > 0) {
+		PyObject *event_list = PyList_New(0);
+		struct fi_cq_tagged_entry *events = (struct fi_cq_tagged_entry *) $1;
+
+		for (size_t i = 0; i < rc; i++) {
+			PyObject *event_obj = SWIG_NewPointerObj((void *)&events[i], SWIGTYPE_p_fi_cq_tagged_entry, 0);
+			
+			PyList_Append(event_list, event_obj);
+			Py_DECREF(event_obj);
+		}
+
+		$result = PyTuple_New(2);
+		PyTuple_SET_ITEM($result, 0, PyLong_FromLong(rc));
+		PyTuple_SET_ITEM($result, 1, event_list);
+	} else {
+		$result = PyTuple_New(2);
+		PyTuple_SET_ITEM($result, 0, PyLong_FromLong(rc));
+		Py_INCREF(Py_None);
+		PyTuple_SET_ITEM($result, 1, Py_None);
+	}
+}
+
+/* handles functions:
+ *    fi_cq_readerr()
+ */
+%typemap(in) (struct fi_cq_err_entry *buf) {
+	Py_buffer py_buf;
+	if (PyObject_GetBuffer($input, &py_buf, PyBUF_WRITABLE) < 0) {
+		SWIG_exception_fail(SWIG_TypeError, "Expected a writable buffer");
+	}
+	$1 = py_buf.buf;
+}
+
+%typemap(argout) (struct fi_cq_err_entry *buf) {
+	ssize_t rc = PyLong_AsLongLong($result);
+
+	if (rc > 0) {
+		PyObject *event_list = PyList_New(0);
+		struct fi_cq_err_entry *err = (struct fi_cq_err_entry *) $1;
+
+		PyObject *event_obj = SWIG_NewPointerObj((void *)err, SWIGTYPE_p_fi_cq_err_entry, 0);
+		
+		PyList_Append(event_list, event_obj);
+		Py_DECREF(event_obj);
+
+		$result = PyTuple_New(2);
+		PyTuple_SET_ITEM($result, 0, PyLong_FromLong(rc));
+		PyTuple_SET_ITEM($result, 1, event_list);
+	} else {
+		$result = PyTuple_New(2);
+		PyTuple_SET_ITEM($result, 0, PyLong_FromLong(rc));
+		Py_INCREF(Py_None);
+		PyTuple_SET_ITEM($result, 1, Py_None);
+	}
+}
+

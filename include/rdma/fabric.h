@@ -37,7 +37,9 @@
 #define FABRIC_H
 
 #include <stdint.h>
+#ifndef SWIG
 #include <stddef.h>
+#endif
 #include <sys/types.h>
 #include <sys/uio.h>
 #include <rdma/fi_errno.h>
