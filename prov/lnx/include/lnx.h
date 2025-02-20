@@ -315,6 +315,7 @@ lnx_select_send_endpoints(struct lnx_ep *lep, fi_addr_t lnx_addr,
 	core_av_addrs = ofi_bufpool_get_ibuf(pai->pai_av->cav_map, lp->lp_addr);
 	*core_addr = core_av_addrs[idx];
 	*cep_out = pei->pei_cep;
+	pei->pei_cep->cep_domain->cd_num_sends++;
 
 	return FI_SUCCESS;
 }
