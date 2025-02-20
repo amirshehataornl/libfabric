@@ -63,18 +63,35 @@ static struct fi_ops_domain lnx_domain_ops = {
 	.query_collective = fi_no_query_collective,
 };
 
+static inline void lnx_dump_core_domain_stats(struct lnx_core_domain *cd)
+{
+	static bool header;
+
+	if (!header) {
+		FI_TRACE(&lnx_prov, FI_LOG_DOMAIN, "Domain name,send count\n");
+		header = true;
+	}
+	FI_TRACE(&lnx_prov, FI_LOG_DOMAIN, "%s,%ld\n",
+		 cd->cd_info->domain_attr->name, cd->cd_num_sends);
+}
+
 static int lnx_domain_close(struct fid *fid)
 {
 	int rc, frc = 0;
 	struct lnx_domain *domain;
 	struct lnx_core_domain *cd;
 	struct dlist_entry *tmp;
+	int dump_stats;
 
 	domain = container_of(fid, struct lnx_domain, ld_domain.domain_fid.fid);
+
+	fi_param_get_bool(&lnx_prov, "dump_stats", &dump_stats);
 
 	/* close all the open core domains */
 	dlist_foreach_container_safe(&domain->ld_core_domains, struct lnx_core_domain,
 				     cd, cd_entry, tmp) {
+		if (dump_stats)
+			lnx_dump_core_domain_stats(cd);
 		dlist_remove(&cd->cd_entry);
 		rc = fi_close(&cd->cd_domain->fid);
 		if (rc)
