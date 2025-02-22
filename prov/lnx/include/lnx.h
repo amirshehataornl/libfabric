@@ -107,23 +107,23 @@ struct lnx_core_cq {
 };
 
 struct lnx_peer_av_info {
-	struct dlist_entry pai_entry;
 	struct lnx_core_av *pai_av;
 	int pai_idx;
 };
 
 struct lnx_peer_ep_info {
-	struct dlist_entry pei_entry;
 	struct lnx_core_ep *pei_cep;
+	struct lnx_peer_av_info *pei_pai;
 };
 
 struct lnx_peer {
 	fi_addr_t lp_addr;
-	int lp_total_eps;
 	ofi_atomic32_t lp_ep_rr;
 	ofi_atomic32_t lp_peer_rr;
-	struct dlist_entry lp_avs;
-	struct dlist_entry lp_eps;
+	int lp_avs_size;
+	int lp_eps_size;
+	struct ofi_bufpool *lp_avs;
+	struct ofi_bufpool *lp_eps;
 };
 
 struct lnx_av {
@@ -131,16 +131,6 @@ struct lnx_av {
 	int lav_max_count;
 	struct lnx_domain *lav_domain;
 	struct dlist_entry lav_core_avs;
-};
-
-struct lnx_mem_desc_prov {
-	struct local_prov *prov;
-	struct fid_mr *core_mr;
-};
-
-struct lnx_mem_desc {
-	struct lnx_mem_desc_prov desc[LNX_MAX_LOCAL_EPS];
-	int desc_count;
 };
 
 struct lnx_mr {
@@ -158,7 +148,6 @@ struct lnx_domain {
 
 struct lnx_ep {
 	struct util_ep le_ep;
-	bool le_local;
 	struct dlist_entry le_core_eps;
 	struct ofi_bufpool *le_recv_bp;
 	ofi_spin_t le_bplock;
@@ -256,6 +245,8 @@ void lnx_foreach_unspec_addr(struct fid_peer_srx *srx,
 
 int lnx_mr_regattr(struct fid *fid, const struct fi_mr_attr *attr,
 		   uint64_t flags, struct fid_mr **mr_fid);
+int lnx_mr_regattr_core(struct lnx_core_domain *cd, void *desc,
+			void **core_desc);
 
 static inline fi_addr_t
 lnx_encode_fi_addr(uint64_t primary_id, uint8_t sub_id)
@@ -278,24 +269,11 @@ static inline uint8_t lnx_decode_sub_id(uint64_t fi_addr)
 	return (fi_addr == FI_ADDR_UNSPEC) ? fi_addr : fi_addr & LNX_MAX_SUB_ID;
 }
 
-static inline
-void lnx_get_core_desc(struct lnx_mem_desc *desc, void **mem_desc)
-{
-	if (desc && desc->desc[0].core_mr) {
-		if (mem_desc)
-			*mem_desc = desc->desc[0].core_mr->mem_desc;
-		return;
-	}
-
-	*mem_desc = NULL;
-}
-
 static inline int
 lnx_select_send_endpoints(struct lnx_ep *lep, fi_addr_t lnx_addr,
 		struct lnx_core_ep **cep_out, fi_addr_t *core_addr)
 {
-	bool pai_found = false;
-	int i = 0, idx, rr;
+	int idx, rr;
 	struct lnx_peer *lp;
 	struct lnx_peer_ep_info *pei;
 	struct lnx_peer_av_info *pai;
@@ -306,37 +284,24 @@ lnx_select_send_endpoints(struct lnx_ep *lep, fi_addr_t lnx_addr,
 		return -FI_ENOSYS;
 
 	/* round robin over local eps */
-	/* TODO: if multiple threads are sending to the same peer, then
-	 * the increment in the line below is not thread safe. Might
-	 * consider using atomic adds and read it to a local variable */
 	rr = ofi_atomic_get32(&lp->lp_ep_rr);
 	ofi_atomic_inc32(&lp->lp_ep_rr);
-	idx = rr % lp->lp_total_eps;
+	idx = rr % lp->lp_eps_size;
 
-	/* Shoudl lp->lp_eps be an indixable structure */
-	dlist_foreach_container(&lp->lp_eps, struct lnx_peer_ep_info,
-				pei, pei_entry) {
-		if (i == idx)
-			break;
-		i++;
-	}
-
-	dlist_foreach_container(&lp->lp_avs, struct lnx_peer_av_info,
-				pai, pai_entry) {
-		if (pai->pai_av == pei->pei_cep->cep_cav) {
-			pai_found = true;
-			break;
-		}
-	}
-
-	if (!pai_found)
+	pei = ofi_bufpool_get_ibuf(lp->lp_eps, idx);
+	if (!pei) {
+		FI_WARN(&lnx_prov, FI_LOG_CORE,
+			"Peer endpoint info not found at idx: %d\n", idx);
 		return -FI_ENOENT;
+	}
+
+	pai = pei->pei_pai;
 
 	rr = ofi_atomic_get32(&lp->lp_peer_rr);
 	ofi_atomic_inc32(&lp->lp_peer_rr);
 	idx = rr % (pai->pai_idx + 1);
 
-	core_av_addrs = ofi_bufpool_get_ibuf(pei->pei_cep->cep_cav->cav_map, lp->lp_addr);
+	core_av_addrs = ofi_bufpool_get_ibuf(pai->pai_av->cav_map, lp->lp_addr);
 	*core_addr = core_av_addrs[idx];
 	*cep_out = pei->pei_cep;
 

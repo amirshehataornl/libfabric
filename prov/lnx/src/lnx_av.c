@@ -143,30 +143,28 @@ lnx_foreach_unspec_addr(struct fid_peer_srx *srx,
 
 static int lnx_peer_av_remove(struct lnx_peer *lp)
 {
-	int i, rc, frc = 0;
+	int i, j, rc, frc = 0;
 	struct lnx_peer_ep_info *pei;
 	struct lnx_peer_av_info *pai;
-	struct dlist_entry *tmp;
 	fi_addr_t *core_addr;
 
-	dlist_foreach_container_safe(&lp->lp_avs,
-			struct lnx_peer_av_info, pai, pai_entry, tmp) {
-		dlist_remove(&pai->pai_entry);
+	for (i = 0; i < lp->lp_avs_size; i++) {
+		pai = ofi_bufpool_get_ibuf(lp->lp_avs, i);
 		core_addr = ofi_bufpool_get_ibuf(pai->pai_av->cav_map, lp->lp_addr);
 		if (!core_addr)
 			continue;
-		for (i = 0; i <= pai->pai_idx; i++) {
-			rc = fi_av_remove(pai->pai_av->cav_av, &core_addr[i], 1, 0);
+		for (j = 0; j <= pai->pai_idx; j++) {
+			rc = fi_av_remove(pai->pai_av->cav_av, &core_addr[j], 1, 0);
 			if (rc)
 				frc = rc;
 		}
+		ofi_ibuf_free(pai);
 	}
 
 	/* cleanup the eps off the peer list */
-	dlist_foreach_container_safe(&lp->lp_eps, struct lnx_peer_ep_info, pei,
-				     pei_entry, tmp) {
-		dlist_remove(&pei->pei_entry);
-		free(pei);
+	for (i = 0; i < lp->lp_eps_size; i++) {
+		pei = ofi_bufpool_get_ibuf(lp->lp_eps, i);
+		ofi_ibuf_free(pei);
 	}
 
 	return frc;
@@ -216,7 +214,7 @@ static int
 lnx_insert_addr(struct lnx_core_av *core_av, struct lnx_ep_addr *addr,
 		struct lnx_peer *lp, bool local)
 {
-	int rc;
+	int rc, i;
 	char *prov_name;
 	void *core_addr = (char*) addr + sizeof(*addr);
 	struct lnx_peer_ep_info *pei;
@@ -232,28 +230,26 @@ lnx_insert_addr(struct lnx_core_av *core_av, struct lnx_ep_addr *addr,
 	if (!local && !strcmp(addr->lea_prov, "shm"))
 		return FI_SUCCESS;
 
-	dlist_foreach_container(&lp->lp_avs, struct lnx_peer_av_info,
-				pai, pai_entry) {
+	for (i = 0; i < lp->lp_avs_size; i++) {
+		pai = ofi_bufpool_get_ibuf(lp->lp_avs, i);
 		if (pai->pai_av == core_av) {
 			pai->pai_idx++;
 			goto insert;
 		}
 	}
 
-	pai = calloc(sizeof(*pai), 1);
+	pai = ofi_ibuf_alloc_at(lp->lp_avs, lp->lp_avs_size);
 	if (!pai)
 		return -FI_ENOMEM;
-	dlist_init(&pai->pai_entry);
 	pai->pai_av = core_av;
-	dlist_insert_tail(&pai->pai_entry, &lp->lp_avs);
+	lp->lp_avs_size++;
 
 insert:
 	core_fi_addr = lnx_encode_fi_addr(lp->lp_addr, pai->pai_idx);
 
 	rc = fi_av_insert(core_av->cav_av, core_addr, 1, &core_fi_addr, FI_AV_USER_ID, NULL);
 	if (rc <= 0) {
-		dlist_remove(&pai->pai_entry);
-		free(pai);
+		ofi_ibuf_free(pai);
 		return rc;
 	}
 
@@ -274,13 +270,12 @@ insert:
 	/* insert all the eps bound to the cav on the peer */
 	dlist_foreach_container(&core_av->cav_ep_list, struct lnx_core_ep,
 				cep, cep_av_entry) {
-		pei = calloc(sizeof(*pei), 1);
+		pei = ofi_ibuf_alloc_at(lp->lp_eps, lp->lp_eps_size);
 		if (!pei)
 			return -FI_ENOMEM;
-		dlist_init(&pei->pei_entry);
 		pei->pei_cep = cep;
-		dlist_insert_tail(&pei->pei_entry, &lp->lp_eps);
-		lp->lp_total_eps++;
+		pei->pei_pai = pai;
+		lp->lp_eps_size++;
 	}
 
 	return FI_SUCCESS;
@@ -298,6 +293,16 @@ int lnx_av_insert(struct fid_av *av, const void *addr, size_t count,
 	struct lnx_address *la;
 	struct lnx_ep_addr *lea;
 	struct lnx_core_av *core_av;
+	struct ofi_bufpool_attr pool_attr_avs = {
+		.size = sizeof(int),
+		.flags = OFI_BUFPOOL_NO_TRACK | OFI_BUFPOOL_INDEXED,
+		.chunk_cnt = LNX_MAX_LOCAL_EPS,
+	};
+	struct ofi_bufpool_attr pool_attr_eps = {
+		.size = sizeof(struct lnx_peer_ep_info),
+		.flags = OFI_BUFPOOL_NO_TRACK | OFI_BUFPOOL_INDEXED,
+		.chunk_cnt = LNX_MAX_LOCAL_EPS,
+	};
 
 	if (flags & FI_AV_USER_ID)
 		return -FI_ENOSYS;
@@ -321,8 +326,17 @@ int lnx_av_insert(struct fid_av *av, const void *addr, size_t count,
 		if (!lp)
 			return -FI_ENOMEM;
 
-		dlist_init(&lp->lp_avs);
-		dlist_init(&lp->lp_eps);
+		rc = ofi_bufpool_create_attr(&pool_attr_avs, &lp->lp_avs);
+		if (rc) {
+			free(lp);
+			return -FI_ENOMEM;
+		}
+
+		rc = ofi_bufpool_create_attr(&pool_attr_eps, &lp->lp_eps);
+		if (rc) {
+			free(lp);
+			return -FI_ENOMEM;
+		}
 		ofi_atomic_initialize32(&lp->lp_ep_rr, 0);
 		ofi_atomic_initialize32(&lp->lp_peer_rr, 0);
 		if (!strcmp(hostname, la->la_hostname) && !disable_shm)

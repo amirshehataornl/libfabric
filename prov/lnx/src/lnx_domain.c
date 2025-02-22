@@ -81,6 +81,8 @@ static int lnx_domain_close(struct fid *fid)
 			frc = rc;
 	}
 
+	ofi_bufpool_destroy(domain->ld_mem_reg_bp);
+
 	rc = ofi_domain_close(&domain->ld_domain);
 	if (rc)
 		frc = rc;
@@ -169,12 +171,22 @@ int lnx_domain_open(struct fid_fabric *fabric, struct fi_info *info,
 	int rc = 0;
 	struct lnx_domain *lnx_domain;
 	struct util_domain *dom;
+	struct ofi_bufpool_attr bp_attrs = {};
 	struct lnx_fabric *lnx_fab = container_of(fabric, struct lnx_fabric,
 					lf_util_fabric.fabric_fid);
 
 	rc = -FI_ENOMEM;
 	lnx_domain = calloc(sizeof(*lnx_domain), 1);
 	if (!lnx_domain)
+		goto out;
+
+	bp_attrs.size = sizeof(struct lnx_mr);
+	bp_attrs.alignment = 8;
+	bp_attrs.max_cnt = UINT32_MAX;
+	bp_attrs.chunk_cnt = 256;
+	bp_attrs.flags = OFI_BUFPOOL_NO_TRACK;
+	rc = ofi_bufpool_create_attr(&bp_attrs, &lnx_domain->ld_mem_reg_bp);
+	if (rc)
 		goto out;
 
 	rc = lnx_setup_fabrics(info->domain_attr->name, lnx_fab, context);

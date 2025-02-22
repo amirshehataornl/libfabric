@@ -249,7 +249,7 @@ out:
  * If nothing is found on the unexpected messages, then add a receive
  * request on the SRQ; happens in the lnx_process_recv()
  */
-static int lnx_process_recv(struct lnx_ep *lep, const struct iovec *iov, void **desc,
+static int lnx_process_recv(struct lnx_ep *lep, const struct iovec *iov, void *desc,
 			fi_addr_t addr, size_t count, struct lnx_peer *lp, uint64_t tag,
 			uint64_t ignore, void *context, uint64_t flags,
 			bool tagged)
@@ -286,6 +286,14 @@ static int lnx_process_recv(struct lnx_ep *lep, const struct iovec *iov, void **
 	rx_entry->rx_entry.msg_size = MIN(ofi_total_iov_len(iov, count),
 				      rx_entry->rx_entry.msg_size);
 	cep = rx_entry->rx_cep;
+
+	if (desc) {
+		rc = lnx_mr_regattr_core(cep->cep_domain, desc,
+					 rx_entry->rx_entry.desc);
+		if (rc)
+			return rc;
+	}
+
 	if (tagged)
 		rc = cep->cep_srx.peer_ops->start_tag(&rx_entry->rx_entry);
 	else
@@ -343,11 +351,8 @@ lnx_recv_common(struct fid_ep *ep, const struct iovec *iov, void *desc,
 	if (!lep)
 		return -FI_ENOSYS;
 
-	/* TODO: desc != NULL is currently not supported */
-	assert(desc == NULL);
-
 	lp = lnx_av_lookup_addr(lep->le_lav, src_addr);
-	rc = lnx_process_recv(lep, iov, NULL, src_addr, 1, lp, tag, ignore,
+	rc = lnx_process_recv(lep, iov, desc, src_addr, 1, lp, tag, ignore,
 			      context, flags, true);
 
 	return rc;
@@ -402,6 +407,7 @@ ssize_t lnx_tsend(struct fid_ep *ep, const void *buf, size_t len, void *desc,
 {
 	int rc;
 	struct lnx_ep *lep;
+	void *core_desc = NULL;
 	struct lnx_core_ep *cep;
 	fi_addr_t core_addr;
 
@@ -417,7 +423,14 @@ ssize_t lnx_tsend(struct fid_ep *ep, const void *buf, size_t len, void *desc,
 	       "sending to %lx tag %lx buf %p len %ld\n",
 	       core_addr, tag, buf, len);
 
-	rc = fi_tsend(cep->cep_ep, buf, len, NULL, core_addr, tag, context);
+	/* do memory registration with the core domain */
+	if (desc) {
+		rc = lnx_mr_regattr_core(cep->cep_domain, desc, &core_desc);
+		if (rc)
+			return rc;
+	}
+
+	rc = fi_tsend(cep->cep_ep, buf, len, core_desc, core_addr, tag, context);
 
 	return rc;
 }
@@ -427,8 +440,12 @@ ssize_t lnx_tsendv(struct fid_ep *ep, const struct iovec *iov, void **desc,
 {
 	int rc;
 	struct lnx_ep *lep;
+	void *core_desc = NULL;
 	struct lnx_core_ep *cep;
 	fi_addr_t core_addr;
+
+	if (count > 1)
+		return -FI_EINVAL;
 
 	lep = container_of(ep, struct lnx_ep, le_ep.ep_fid.fid);
 	if (!lep)
@@ -442,7 +459,15 @@ ssize_t lnx_tsendv(struct fid_ep *ep, const struct iovec *iov, void **desc,
 	       "sending to %lx tag %lx buf %p len %ld\n",
 	       core_addr, tag, buf, len);
 
-	rc = fi_tsendv(cep->cep_ep, iov, NULL, count, core_addr, tag, context);
+	/* do memory registration with the core domain */
+	if (desc && *desc) {
+		rc = lnx_mr_regattr_core(cep->cep_domain, *desc, &core_desc);
+		if (rc)
+			return rc;
+	}
+
+	rc = fi_tsendv(cep->cep_ep, iov, (core_desc) ? &core_desc : NULL,
+		       count, core_addr, tag, context);
 
 	return rc;
 }
@@ -452,8 +477,12 @@ ssize_t lnx_tsendmsg(struct fid_ep *ep, const struct fi_msg_tagged *msg,
 {
 	int rc;
 	struct lnx_ep *lep;
+	void *core_desc = NULL;
 	struct lnx_core_ep *cep;
 	struct fi_msg_tagged core_msg;
+
+	if (msg->iov_count > 1)
+		return -FI_EINVAL;
 
 	memcpy(&core_msg, msg, sizeof(*msg));
 
@@ -468,6 +497,15 @@ ssize_t lnx_tsendmsg(struct fid_ep *ep, const struct fi_msg_tagged *msg,
 	FI_DBG(&lnx_prov, FI_LOG_CORE,
 	       "sending to %lx tag %lx\n",
 	       core_addr, msg->tag);
+
+	/* do memory registration with the core domain */
+	if (core_msg.desc && *core_msg.desc) {
+		rc = lnx_mr_regattr_core(cep->cep_domain, *core_msg.desc, &core_desc);
+		if (rc)
+			return rc;
+	}
+
+	*core_msg.desc = core_desc;
 
 	rc = fi_tsendmsg(cep->cep_ep, &core_msg, flags);
 
@@ -506,6 +544,7 @@ ssize_t lnx_tsenddata(struct fid_ep *ep, const void *buf, size_t len, void *desc
 	struct lnx_ep *lep;
 	struct lnx_core_ep *cep;
 	fi_addr_t core_addr;
+	void *core_desc = desc;
 
 	lep = container_of(ep, struct lnx_ep, le_ep.ep_fid.fid);
 	if (!lep)
@@ -519,7 +558,14 @@ ssize_t lnx_tsenddata(struct fid_ep *ep, const void *buf, size_t len, void *desc
 	       "sending to %lx tag %lx buf %p len %ld\n",
 	       core_addr, tag, buf, len);
 
-	rc = fi_tsenddata(cep->cep_ep, buf, len, NULL,
+	/* do memory registration with the core domain */
+	if (desc) {
+		rc = lnx_mr_regattr_core(cep->cep_domain, desc, &core_desc);
+		if (rc)
+			return rc;
+	}
+
+	rc = fi_tsenddata(cep->cep_ep, buf, len, core_desc,
 			  data, core_addr, tag, context);
 
 	return rc;

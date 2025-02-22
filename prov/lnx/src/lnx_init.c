@@ -258,7 +258,7 @@ lnx_get_link_by_dom(char *domain_name)
 	return NULL;
 }
 
-static int lnx_generate_link_info(struct fi_info **info)
+static int lnx_generate_link_info(struct fi_info **info, const struct fi_info *hints)
 {
 	struct fi_info *itr, *fi = NULL, *next;
 	struct lnx_link_info *link;
@@ -337,6 +337,7 @@ static int lnx_generate_link_info(struct fi_info **info)
 		next = fi_dupinfo(link->fi_link);
 		if (hints)
 			next->domain_attr->mr_mode |= hints->domain_attr->mr_mode;
+
 		if (!next)
 			return -FI_ENOMEM;
 		if (fi) {
@@ -361,11 +362,10 @@ int lnx_getinfo_helper(uint32_t version, char *prov, char *domain,
 	int rc;
 	char *orig_prov_name = NULL, *orig_dom_name = NULL;
 	struct fi_info *core_info;
-	uint64_t caps, mr_mode;
+	uint64_t caps;
 	bool shm = false;
 
 	caps = lnx_hints->caps;
-	mr_mode = lnx_hints->domain_attr->mr_mode;
 
 	orig_prov_name = lnx_hints->fabric_attr->prov_name;
 	orig_dom_name = lnx_hints->domain_attr->name;
@@ -375,9 +375,9 @@ int lnx_getinfo_helper(uint32_t version, char *prov, char *domain,
 
 	if (!strncmp(prov, "shm", 3)) {
 		shm = true;
-		/* make sure we get the correct shm provider */
 		lnx_hints->caps &= ~(FI_REMOTE_COMM);
 	}
+
 	rc = fi_getinfo(version, NULL, NULL, OFI_GETINFO_HIDDEN,
 			lnx_hints, &core_info);
 
@@ -386,10 +386,8 @@ int lnx_getinfo_helper(uint32_t version, char *prov, char *domain,
 	if (rc)
 		return rc;
 
-	if (shm) {
+	if (shm)
 		lnx_hints->caps = caps;
-		lnx_hints->domain_attr->mr_mode = mr_mode;
-	}
 
 	rc = lnx_cache_info(link, core_info, new_prov);
 
@@ -495,7 +493,7 @@ int lnx_getinfo(uint32_t version, const char *node, const char *service,
 	/* Generate the lnx info which represents all possible combination
 	 * of domains which are to be linked.
 	 */
-	rc = lnx_generate_link_info(info);
+	rc = lnx_generate_link_info(info, hints);
 
 	fi_freeinfo(lnx_hints);
 	return rc;
@@ -561,26 +559,12 @@ out:
 int lnx_fabric(struct fi_fabric_attr *attr, struct fid_fabric **fabric,
 		void *context)
 {
-	struct ofi_bufpool_attr bp_attrs = {};
 	struct lnx_fabric *lnx_fab;
 	int rc;
 
 	lnx_fab = calloc(sizeof(*lnx_fab), 1);
 	if (!lnx_fab)
 		return -FI_ENOMEM;
-
-	bp_attrs.size = sizeof(struct lnx_mr);
-	bp_attrs.alignment = 8;
-	bp_attrs.max_cnt = UINT32_MAX;
-	bp_attrs.chunk_cnt = 64;
-	bp_attrs.flags = OFI_BUFPOOL_NO_TRACK;
-	rc = ofi_bufpool_create_attr(&bp_attrs, &lnx_fab->lf_mem_reg_bp);
-	if (rc) {
-		FI_WARN(&lnx_prov, FI_LOG_FABRIC,
-			"Failed to create memory registration buffer pool");
-		free(lnx_fab);
-		return -FI_ENOMEM;
-	}
 
 	/* initialize the provider table */
 	dlist_init(&lnx_fab->lf_core_fabrics);
@@ -625,9 +609,6 @@ int lnx_fabric_close(struct fid *fid)
 			frc = rc;
 		free(cf);
 	}
-
-	/* free mr registration pool */
-	ofi_bufpool_destroy(lnx_fab->lf_mem_reg_bp);
 
 	rc = ofi_fabric_close(&lnx_fab->lf_util_fabric);
 	if (rc)

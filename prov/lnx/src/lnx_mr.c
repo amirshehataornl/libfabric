@@ -49,9 +49,52 @@
 #include "rdma/fi_ext.h"
 #include "lnx.h"
 
-int lnx_mr_close(struct fid *fid)
+/*
+ * 1. On MR registration we store the information passed in the fi_mr_attr
+ * 2. If we get a bind, we flag it and store the flags and fid pointer
+ * 3. If we get a control command we flag it and store the command
+ * 4. When a data operation we're passed the descriptor, using that we can
+ * find out the information we stored, and since we already know the
+ * target core provider we can do memory registration at that point
+ */
+
+int lnx_mr_regattr_core(struct lnx_core_domain *cd, void *desc, void **core_desc)
 {
-	return -FI_ENOSYS;
+	int rc;
+	struct lnx_mr *lm;
+
+	lm = (struct lnx_mr *)desc;
+	if (lm->lm_core_mr)
+		goto out;
+
+	rc = fi_mr_regattr(cd->cd_domain, &lm->lm_attr, lm->lm_mr.flags,
+			   &lm->lm_core_mr);
+	if (rc)
+		return rc;
+
+out:
+	*core_desc = lm->lm_core_mr->mem_desc;
+	return FI_SUCCESS;
+}
+
+static int lnx_mr_close(struct fid *fid)
+{
+	int rc, frc = FI_SUCCESS;
+	struct lnx_mr *lm;
+
+	lm = container_of(fid, struct lnx_mr, lm_mr.mr_fid.fid);
+
+	if (lm->lm_core_mr) {
+		rc = fi_close(&lm->lm_core_mr->fid);
+		if (rc)
+			frc = rc;
+	}
+
+	ofi_atomic_dec32(&lm->lm_mr.domain->ref);
+
+	ofi_buf_free(lm);
+
+	return frc;
 }
 
 static int lnx_mr_bind(struct fid *fid, struct fid *bfid, uint64_t flags)
@@ -75,7 +118,36 @@ static struct fi_ops lnx_mr_fi_ops = {
 int lnx_mr_regattr(struct fid *fid, const struct fi_mr_attr *attr,
 		   uint64_t flags, struct fid_mr **mr_fid)
 {
-	return -FI_ENOSYS;
+	struct lnx_domain *domain;
+	struct ofi_mr *mr;
+	struct lnx_mr *lm = NULL;
+
+	if (fid->fclass != FI_CLASS_DOMAIN || !attr
+	    || attr->iov_count <= 0 || attr->iov_count > LNX_IOV_LIMIT)
+		return -FI_EINVAL;
+
+	domain = container_of(fid, struct lnx_domain, ld_domain.domain_fid.fid);
+
+	lm = ofi_buf_alloc(domain->ld_mem_reg_bp);
+	if (!lm)
+		return -FI_ENOMEM;
+
+	memset(lm, 0, sizeof(*lm));
+
+	lm->lm_attr = *attr;
+	memcpy(lm->lm_iov, attr->mr_iov, sizeof(struct iovec) * attr->iov_count);
+	lm->lm_attr.mr_iov = lm->lm_iov;
+	mr = &lm->lm_mr;
+	mr->mr_fid.fid.fclass = FI_CLASS_MR;
+	mr->mr_fid.fid.ops = &lnx_mr_fi_ops;
+	mr->mr_fid.mem_desc = lm;
+	mr->domain = &domain->ld_domain;
+	mr->flags = flags | FI_HMEM_DEVICE_ONLY;
+
+	*mr_fid = &mr->mr_fid;
+	ofi_atomic_inc32(&domain->ld_domain.ref);
+
+	return FI_SUCCESS;
 }
 
 
