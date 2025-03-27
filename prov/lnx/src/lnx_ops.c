@@ -134,6 +134,19 @@ get_rx_entry(struct lnx_ep *lep, const struct iovec *iov,
 }
 
 static inline struct lnx_rx_entry *
+lnx_find_first_match(struct lnx_queue *q, struct lnx_match_attr *match)
+{
+	struct lnx_rx_entry *rx_entry;
+
+	ofi_spin_lock(&q->lq_qlock);
+	rx_entry = (struct lnx_rx_entry *) dlist_find_first_match(
+			&q->lq_queue, q->lq_match_func, match);
+	ofi_spin_unlock(&q->lq_qlock);
+
+	return rx_entry;
+}
+
+static inline struct lnx_rx_entry *
 lnx_remove_first_match(struct lnx_queue *q, struct lnx_match_attr *match)
 {
 	struct lnx_rx_entry *rx_entry;
@@ -233,6 +246,67 @@ out:
 	return rc;
 }
 
+static int
+lnx_discard(struct lnx_ep *lep, struct lnx_rx_entry *rx_entry, void *context)
+{
+	struct lnx_core_ep *cep = rx_entry->rx_cep;
+	int rc;
+
+	rc = cep->cep_srx.peer_ops->discard_tag(&rx_entry->rx_entry);
+	if (rc) {
+		FI_WARN(&lnx_prov, FI_LOG_CORE,
+			"Error discarding message from %s\n",
+			cep->cep_domain->cd_info->fabric_attr->name);
+	}
+
+	rc = ofi_cq_write(&lep->le_lcq->lcq_util_cq, context,
+			rx_entry->rx_entry.flags,
+			rx_entry->rx_entry.msg_size, NULL,
+			rx_entry->rx_entry.cq_data,
+			rx_entry->rx_entry.tag);
+
+	lnx_free_entry(&rx_entry->rx_entry);
+
+	return rc;
+}
+
+static int
+lnx_peek(struct lnx_ep *lep, struct lnx_match_attr *match_attr, void *context,
+	 uint64_t flags)
+{
+	int rc;
+	struct lnx_rx_entry *rx_entry;
+	struct lnx_peer_srq *lnx_srq = &lep->le_srq;
+
+	rx_entry = lnx_find_first_match(&lnx_srq->lps_trecv.lqp_unexq,
+					match_attr);
+	if (!rx_entry) {
+		FI_DBG(&lnx_prov, FI_LOG_CORE,
+			"PEEK addr=%lx tag=%lx ignore=%lx\n",
+			match_attr->lm_addr, match_attr->lm_tag,
+			match_attr->lm_ignore);
+		return ofi_cq_write_error_peek(&lep->le_lcq->lcq_util_cq,
+				match_attr->lm_tag, context);
+	}
+
+	rc = ofi_cq_write(&lep->le_lcq->lcq_util_cq, context,
+			rx_entry->rx_entry.flags,
+			rx_entry->rx_entry.msg_size, NULL,
+			rx_entry->rx_entry.cq_data,
+			rx_entry->rx_entry.tag);
+
+	if (flags & FI_DISCARD) {
+		lnx_free_entry(&rx_entry->rx_entry);
+		goto out;
+	}
+
+	if (flags & FI_CLAIM)
+		((struct fi_context *)context)->internal[0] = rx_entry;
+
+out:
+	return rc;
+}
+
 /*
  * if lp is NULL, then we're attempting to receive from any peer so
  * matching the tag is the only thing that matters.
@@ -264,14 +338,28 @@ static int lnx_process_recv(struct lnx_ep *lep, const struct iovec *iov, void *d
 	match_attr.lm_ignore = ignore;
 	match_attr.lm_tag = tag;
 
-	rx_entry = lnx_remove_first_match(&lnx_srq->lps_trecv.lqp_unexq,
-					  &match_attr);
-	if (!rx_entry) {
-		FI_DBG(&lnx_prov, FI_LOG_CORE,
-		       "addr=%lx tag=%lx ignore=%lx buf=%p len=%lx not found\n",
-		       addr, tag, ignore, iov->iov_base, iov->iov_len);
+	if (flags & FI_PEEK)
+		return lnx_peek(lep, &match_attr, context, flags);
 
-		goto nomatch;
+	if (flags & FI_DISCARD) {
+		rx_entry = (struct lnx_rx_entry *)
+			(((struct fi_context *)context)->internal[0]);
+		return lnx_discard(lep, rx_entry, context);
+	}
+
+	if (flags & FI_CLAIM) {
+		rx_entry = (struct lnx_rx_entry *)
+			(((struct fi_context *)context)->internal[0]);
+	} else {
+		rx_entry = lnx_remove_first_match(&lnx_srq->lps_trecv.lqp_unexq,
+						&match_attr);
+		if (!rx_entry) {
+			FI_DBG(&lnx_prov, FI_LOG_CORE,
+			"addr=%lx tag=%lx ignore=%lx buf=%p len=%lx not found\n",
+			addr, tag, ignore, iov->iov_base, iov->iov_len);
+
+			goto nomatch;
+		}
 	}
 
 	FI_DBG(&lnx_prov, FI_LOG_CORE,
